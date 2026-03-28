@@ -1,0 +1,44 @@
+{
+  "name": "@obfious/js",
+  "version": "0.1.1",
+  "description": "Obfious anti-bot protection for JavaScript — CF Workers, Next.js, Express, Fastify, Lambda",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./nextjs": {
+      "types": "./dist/nextjs.d.ts",
+      "import": "./dist/nextjs.js"
+    },
+    "./express": {
+      "types": "./dist/express.d.ts",
+      "import": "./dist/express.js"
+    },
+    "./fastify": {
+      "types": "./dist/fastify.d.ts",
+      "import": "./dist/fastify.js"
+    },
+    "./lambda": {
+      "types": "./dist/lambda.d.ts",
+      "import": "./dist/lambda.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "npm run build",
+    "ship": "npm version patch && npm publish --access public"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.4",
+    "typescript": "^5.7.0"
+  },
+  "license": "SEE LICENSE IN LICENSE"
+}
