@@ -24,7 +24,6 @@ npm install @obfious/js
 import { Obfious } from "@obfious/js";
 
 const obfious = new Obfious({
-  stableString: "my-app:3000",
   includePaths: ["/api/"],
 });
 
@@ -37,7 +36,7 @@ if (result.response) return result.response;
 
 // Script tag for HTML <head>:
 const tag = await obfious.scriptTag({ nonce: "abc123" });
-// → <script src="/a3f7c9d4e5.js" nonce="abc123" defer></script>
+// -> <script src="/?a3f7c9d4e5=xR7kM2pQ" nonce="abc123"></script>
 ```
 
 ### Next.js
@@ -48,7 +47,6 @@ import { NextResponse } from "next/server";
 
 const obfious = createObfiousMiddleware({
   creds: { keyId: process.env.OBFIOUS_KEY_ID!, secret: process.env.OBFIOUS_SECRET! },
-  stableString: "my-nextjs-app",
   includePaths: ["/api/"],
 });
 
@@ -68,7 +66,6 @@ import { obfiousMiddleware } from "@obfious/js/express";
 const app = express();
 app.use(obfiousMiddleware({
   creds: { keyId: process.env.OBFIOUS_KEY_ID!, secret: process.env.OBFIOUS_SECRET! },
-  stableString: `my-app:${PORT}`,
   includePaths: ["/api/"],
 }));
 ```
@@ -82,7 +79,6 @@ import { obfiousPlugin } from "@obfious/js/fastify";
 const app = Fastify();
 app.register(obfiousPlugin, {
   creds: { keyId: process.env.OBFIOUS_KEY_ID!, secret: process.env.OBFIOUS_SECRET! },
-  stableString: `my-app:${PORT}`,
   includePaths: ["/api/"],
 });
 ```
@@ -94,7 +90,6 @@ import { obfiousHandler } from "@obfious/js/lambda";
 
 export const handler = obfiousHandler({
   creds: { keyId: process.env.OBFIOUS_KEY_ID!, secret: process.env.OBFIOUS_SECRET! },
-  stableString: "my-lambda-api",
   includePaths: ["/api/"],
 }, async (event, context) => {
   return { statusCode: 200, body: JSON.stringify({ ok: true }), headers: {} };
@@ -106,13 +101,20 @@ export const handler = obfiousHandler({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `apiUrl` | string | `https://api.obfious.com` | API base URL |
-| `stableString` | string | `"obfious-default"` | Stable string for script path derivation |
-| `scriptPath` | string | (derived) | Override the derived script path |
+| `scriptPath` | string | (time-rotating) | Override the auto-derived script URL |
 | `includePaths` | string[] | (all) | Only guard these path prefixes |
 | `excludePaths` | string[] | (none) | Always pass through these prefixes |
-| `privateKey` | string | — | HMAC key for user ID encryption |
+| `privateKey` | string | -- | HMAC key for user ID encryption |
 | `getClientIp` | callback | (auto) | Custom client IP extraction |
 | `getPlatformSignals` | callback | (CF default) | Custom platform signal headers |
+
+## CSP requirements
+
+```
+script-src 'self' 'wasm-unsafe-eval';
+worker-src 'self';
+connect-src 'self';
+```
 
 ## License
 
