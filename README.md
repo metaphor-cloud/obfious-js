@@ -110,11 +110,16 @@ export const handler = obfiousHandler({
 
 ## CSP requirements
 
+Obfious needs to compile WebAssembly and spawn a Web Worker from same-origin URLs. If your app sets an explicit `script-src` directive, you must include `'wasm-unsafe-eval'`:
+
 ```
 script-src 'self' 'wasm-unsafe-eval';
 worker-src 'self';
-connect-src 'self';
 ```
+
+If you only have `default-src 'self'` with **no** explicit `script-src`, WASM compilation is implicitly allowed and no additional directives are needed. The `'wasm-unsafe-eval'` requirement only kicks in when `script-src` is explicitly set.
+
+`worker-src` similarly falls back to `script-src` then `default-src` — only set it explicitly if your policy requires it.
 
 ## License
 

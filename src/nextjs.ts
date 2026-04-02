@@ -1,18 +1,14 @@
 import { Obfious } from "./proxy";
-import type { ObfiousConfig, ObfiousCreds, ProtectResult } from "./proxy";
+import type { ObfiousConfig, ProtectResult } from "./proxy";
 
-export type { ObfiousConfig, ObfiousCreds, ProtectResult };
+export type { ObfiousConfig, ProtectResult };
 export { Obfious };
 
-export interface ObfiousMiddlewareConfig extends ObfiousConfig {
-  creds: ObfiousCreds;
-}
-
 /**
- * Create v2.1 middleware for Next.js App Router (edge runtime).
+ * Create middleware for Next.js App Router (edge runtime).
  *
  * ```ts
- * import { createObfiousMiddleware } from "@obfious/js/nextjs-v2";
+ * import { createObfiousMiddleware } from "@obfious/js/nextjs";
  *
  * const obfious = createObfiousMiddleware({
  *   creds: { keyId: process.env.OBFIOUS_KEY_ID!, secret: process.env.OBFIOUS_SECRET! },
@@ -26,12 +22,10 @@ export interface ObfiousMiddlewareConfig extends ObfiousConfig {
  * }
  * ```
  */
-export function createObfiousMiddleware(config: ObfiousMiddlewareConfig) {
-  const { creds, ...obfiousConfig } = config;
-
+export function createObfiousMiddleware(config: ObfiousConfig) {
   const obfious = new Obfious({
-    ...obfiousConfig,
-    getClientIp: obfiousConfig.getClientIp ?? ((req: Request) =>
+    ...config,
+    getClientIp: config.getClientIp ?? ((req: Request) =>
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || req.headers.get("x-real-ip")
       || "unknown"
@@ -39,7 +33,7 @@ export function createObfiousMiddleware(config: ObfiousMiddlewareConfig) {
   });
 
   return async (request: Request): Promise<Response | null> => {
-    const result = await obfious.protect(request, creds);
+    const result = await obfious.protect(request);
     return result.response;
   };
 }

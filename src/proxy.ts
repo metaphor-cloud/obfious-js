@@ -7,6 +7,10 @@
  */
 
 export interface ObfiousConfig {
+  /** Consumer key ID (required) */
+  keyId: string;
+  /** Consumer HMAC secret (required) */
+  secret: string;
   /** Obfious API base URL (default: https://api.obfious.com) */
   apiUrl?: string;
   /** Override script URL instead of using time-rotating derivation */
@@ -42,18 +46,18 @@ const RANDOM_VALUE_TTL = 900_000; // 15 min
 
 export class Obfious {
   private config: ObfiousConfig;
-  private creds: ObfiousCreds | null = null;
+  private creds: ObfiousCreds;
   private randomValue: string | null = null;
   private randomValueCreatedAt = 0;
 
-  constructor(config: ObfiousConfig = {}) {
+  constructor(config: ObfiousConfig) {
     this.config = { ...config, apiUrl: config.apiUrl ?? "https://api.obfious.com" };
+    this.creds = { keyId: config.keyId, secret: config.secret };
   }
 
   /** Get the script URL with time-rotating query param. */
   async getScriptUrl(): Promise<string> {
     if (this.config.scriptPath) return this.config.scriptPath;
-    if (!this.creds) throw new Error("Credentials required for script URL derivation");
     const key = await deriveBootstrapKey(this.creds.secret);
     this.ensureRandomValue();
     return `/?${key}=${this.randomValue}`;
@@ -61,7 +65,6 @@ export class Obfious {
 
   /** Get the worker URL with time-rotating query param (includes type marker). */
   async getWorkerUrl(): Promise<string> {
-    if (!this.creds) throw new Error("Credentials required for worker URL derivation");
     const key = await deriveWorkerKey(this.creds.secret);
     this.ensureRandomValue();
     return `/?${key}=${this.randomValue}`;
@@ -77,18 +80,14 @@ export class Obfious {
   /** Main entry: handle a request */
   async protect(
     request: Request,
-    creds?: ObfiousCreds,
     user?: string,
   ): Promise<ProtectResult> {
-    const pass: ProtectResult = { response: null };
-    if (creds && !this.creds) this.creds = creds;
-    if (!this.creds) return pass;
 
     const url = new URL(request.url);
 
     // --- Serve bootstrap script or worker ---
     if (request.method === "GET") {
-      if (url.pathname === "/" && this.creds) {
+      if (url.pathname === "/") {
         for (const [paramKey] of url.searchParams) {
           if (await isValidBootstrapKey(this.creds.secret, paramKey)) {
             const bundle = await this.fetchBundle();
@@ -150,9 +149,9 @@ export class Obfious {
     }
 
     // --- Guard protected routes ---
-    if (this.config.excludePaths?.some(p => url.pathname.startsWith(p))) return pass;
+    if (this.config.excludePaths?.some(p => url.pathname.startsWith(p))) return { response: null };
     if (this.config.includePaths) {
-      if (!this.config.includePaths.some(p => url.pathname.startsWith(p))) return pass;
+      if (!this.config.includePaths.some(p => url.pathname.startsWith(p))) return { response: null };
     }
 
     const authHdr = request.headers.get("x-req-auth");
@@ -194,7 +193,7 @@ export class Obfious {
 
   private async fetchBundle(): Promise<string | null> {
     try {
-      const workerUrl = this.creds ? await this.getWorkerUrl() : "";
+      const workerUrl = await this.getWorkerUrl();
       const res = await this.authedFetch("/b", {
         method: "GET",
         headers: { "x-obfious-worker-url": workerUrl },
