@@ -285,7 +285,11 @@ export class Obfious {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) return { valid: false };
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        console.error(`[obfious] Validate failed: ${res.status} ${errText}`);
+        return { valid: false };
+      }
       const result = await res.json() as any;
       return { valid: result.valid === true, deviceId: result.deviceId };
     } catch {
