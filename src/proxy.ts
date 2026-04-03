@@ -91,31 +91,31 @@ export class Obfious {
         for (const [paramKey] of url.searchParams) {
           if (await isValidBootstrapKey(this.creds.secret, paramKey)) {
             const bundle = await this.fetchBundle();
-            if (bundle) {
-              return {
-                response: new Response(bundle, {
+            return {
+              response: new Response(
+                bundle ?? 'console.error("[obfious] Failed to load bundle from API");',
+                {
                   headers: {
                     "Content-Type": "application/javascript",
-                    "Cache-Control": "private, max-age=300",
+                    "Cache-Control": bundle ? "private, max-age=300" : "no-store",
                   },
-                }),
-              };
-            }
-            break;
+                },
+              ),
+            };
           }
           if (await isValidWorkerKey(this.creds.secret, paramKey)) {
             const worker = await this.fetchWorker();
-            if (worker) {
-              return {
-                response: new Response(worker, {
+            return {
+              response: new Response(
+                worker ?? 'console.error("[obfious] Failed to load worker from API");',
+                {
                   headers: {
                     "Content-Type": "application/javascript",
-                    "Cache-Control": "private, max-age=300",
+                    "Cache-Control": worker ? "private, max-age=300" : "no-store",
                   },
-                }),
-              };
-            }
-            break;
+                },
+              ),
+            };
           }
         }
       }
@@ -198,9 +198,13 @@ export class Obfious {
         method: "GET",
         headers: { "x-obfious-worker-url": workerUrl },
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.error(`[obfious] Bundle fetch failed: ${res.status} ${res.statusText}`);
+        return null;
+      }
       return await res.text();
-    } catch {
+    } catch (err) {
+      console.error("[obfious] Bundle fetch error:", err);
       return null;
     }
   }
@@ -208,9 +212,13 @@ export class Obfious {
   private async fetchWorker(): Promise<string | null> {
     try {
       const res = await this.authedFetch("/w", { method: "GET" });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.error(`[obfious] Worker fetch failed: ${res.status} ${res.statusText}`);
+        return null;
+      }
       return await res.text();
-    } catch {
+    } catch (err) {
+      console.error("[obfious] Worker fetch error:", err);
       return null;
     }
   }
