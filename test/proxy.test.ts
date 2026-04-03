@@ -134,6 +134,32 @@ describe("@obfious/js proxy", () => {
     });
   });
 
+  describe("middleware creds flow", () => {
+    it("creds passed via middleware pattern reach the constructor", async () => {
+      // Simulate the Express/Fastify/Lambda pattern:
+      // { creds, ...config } destructured, then keyId/secret added back
+      const creds = { keyId: "k", secret: "test-secret" };
+      const config = { includePaths: ["/api/"] };
+      const ob = new Obfious({ ...config, keyId: creds.keyId, secret: creds.secret });
+
+      // If creds flowed correctly, the bootstrap key should match one built with direct creds
+      const directOb = new Obfious({ keyId: "k", secret: "test-secret" });
+      const url1 = (await ob.getScriptUrl()).split("=")[0];
+      const url2 = (await directOb.getScriptUrl()).split("=")[0];
+      expect(url1).toBe(url2);
+    });
+
+    it("serves bundle when creds come from middleware pattern", async () => {
+      const creds = { keyId: "k", secret: "test-secret" };
+      const ob = new Obfious({ keyId: creds.keyId, secret: creds.secret });
+      const url = "https://example.com" + await ob.getScriptUrl();
+      mockFetch.mockResolvedValueOnce(new Response("bundle"));
+      const result = await ob.protect(new Request(url));
+      expect(result.response).not.toBeNull();
+      expect(await result.response!.text()).toBe("bundle");
+    });
+  });
+
   describe("protect — auth", () => {
     it("401 when x-req-auth missing", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });

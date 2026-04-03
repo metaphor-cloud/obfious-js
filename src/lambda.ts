@@ -78,6 +78,8 @@ export function obfiousHandler(options: ObfiousLambdaOptions, handler: LambdaHan
 
   const obfious = new Obfious({
     ...config,
+    keyId: creds.keyId,
+    secret: creds.secret,
     getClientIp: config.getClientIp ?? ((req: Request) =>
       req.headers.get("x-lambda-source-ip")
       || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
@@ -93,7 +95,7 @@ export function obfiousHandler(options: ObfiousLambdaOptions, handler: LambdaHan
     request.headers.set("x-lambda-source-ip", lambdaIp);
 
     const user = getUser?.(event);
-    const result = await obfious.protect(request, creds, user);
+    const result = await obfious.protect(request, user);
 
     if (result.response) return responseToResult(result.response);
 

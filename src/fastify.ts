@@ -30,6 +30,8 @@ export async function obfiousPlugin(fastify: any, options: ObfiousFastifyOptions
 
   const obfious = new Obfious({
     ...config,
+    keyId: creds.keyId,
+    secret: creds.secret,
     getClientIp: config.getClientIp ?? ((req: Request) =>
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || req.headers.get("x-real-ip")
@@ -41,7 +43,7 @@ export async function obfiousPlugin(fastify: any, options: ObfiousFastifyOptions
   fastify.addHook("onRequest", async (request: any, reply: any) => {
     const webReq = toWebRequest(request.raw);
     const user = getUser?.(request.raw);
-    const result = await obfious.protect(webReq, creds, user);
+    const result = await obfious.protect(webReq, user);
 
     if (result.response) {
       const headers: Record<string, string> = {};

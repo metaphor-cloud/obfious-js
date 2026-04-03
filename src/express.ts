@@ -30,6 +30,8 @@ export function obfiousMiddleware(options: ObfiousExpressOptions) {
 
   const obfious = new Obfious({
     ...config,
+    keyId: creds.keyId,
+    secret: creds.secret,
     getClientIp: config.getClientIp ?? ((req: Request) =>
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || req.headers.get("x-real-ip")
@@ -42,7 +44,7 @@ export function obfiousMiddleware(options: ObfiousExpressOptions) {
     try {
       const webReq = toWebRequest(req);
       const user = getUser?.(req);
-      const result = await obfious.protect(webReq, creds, user);
+      const result = await obfious.protect(webReq, user);
 
       if (result.response) {
         await writeWebResponse(res, result.response);

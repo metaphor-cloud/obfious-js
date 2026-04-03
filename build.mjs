@@ -33,8 +33,9 @@ for (const [name, opts] of Object.entries(entries)) {
 // --- Type declarations (v2.1) ---
 
 writeFileSync("dist/index.d.ts", `export interface ObfiousConfig {
+    keyId: string;
+    secret: string;
     apiUrl?: string;
-    stableString?: string;
     scriptPath?: string;
     includePaths?: string[];
     excludePaths?: string[];
@@ -51,19 +52,20 @@ export interface ProtectResult {
     deviceId?: string;
 }
 export declare class Obfious {
-    constructor(config?: ObfiousConfig);
-    getScriptPath(): Promise<string>;
+    constructor(config: ObfiousConfig);
+    getScriptUrl(): Promise<string>;
+    getWorkerUrl(): Promise<string>;
     scriptTag(opts?: { nonce?: string }): Promise<string>;
-    protect(request: Request, creds?: ObfiousCreds, user?: string): Promise<ProtectResult>;
+    protect(request: Request, user?: string): Promise<ProtectResult>;
 }
 `);
 
 writeFileSync("dist/nextjs.d.ts", `import { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult } from "@obfious/js";
 export { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult };
-export interface ObfiousMiddlewareConfig extends ObfiousConfig {
-    creds: ObfiousCreds;
+export interface ObfiousNextjsConfig extends ObfiousConfig {
+    creds?: ObfiousCreds;
 }
-export declare function createObfiousMiddleware(config: ObfiousMiddlewareConfig): (request: Request) => Promise<Response | null>;
+export declare function createObfiousMiddleware(config: ObfiousNextjsConfig): (request: Request) => Promise<Response | null>;
 export declare function obfiousScriptTag(obfious: Obfious, nonce?: string): Promise<string>;
 `);
 
