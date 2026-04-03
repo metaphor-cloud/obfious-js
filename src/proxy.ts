@@ -291,8 +291,12 @@ export class Obfious {
         return { valid: false };
       }
       const result = await res.json() as any;
+      if (result.valid !== true) {
+        console.error(`[obfious] Validate rejected: ${JSON.stringify(result)}`);
+      }
       return { valid: result.valid === true, deviceId: result.deviceId };
-    } catch {
+    } catch (err) {
+      console.error("[obfious] Validate error:", err);
       return { valid: false };
     }
   }
