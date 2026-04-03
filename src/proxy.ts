@@ -241,11 +241,16 @@ export class Obfious {
         headers[k.replace(/[\r\n]/g, "")] = String(v).replace(/[\r\n]/g, "");
       }
     }
-    return this.authedFetch(originalPath, {
+    const res = await this.authedFetch(originalPath, {
       method: "POST",
       headers,
       body: body.buffer as ArrayBuffer,
     });
+    if (!res.ok) {
+      const errText = await res.clone().text().catch(() => "");
+      console.error(`[obfious] forwardToApi ${originalPath}: ${res.status} ${errText}`);
+    }
+    return res;
   }
 
   private async forwardStreamToApi(
