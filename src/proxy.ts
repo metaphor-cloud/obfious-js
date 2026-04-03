@@ -93,7 +93,7 @@ export class Obfious {
             const bundle = await this.fetchBundle();
             return {
               response: new Response(
-                bundle ?? 'console.error("[obfious] Failed to load bundle from API");',
+                bundle ?? `console.error("[obfious] Failed to load bundle: ${this.lastFetchError}");`,
                 {
                   headers: {
                     "Content-Type": "application/javascript",
@@ -107,7 +107,7 @@ export class Obfious {
             const worker = await this.fetchWorker();
             return {
               response: new Response(
-                worker ?? 'console.error("[obfious] Failed to load worker from API");',
+                worker ?? `console.error("[obfious] Failed to load worker: ${this.lastFetchError}");`,
                 {
                   headers: {
                     "Content-Type": "application/javascript",
@@ -191,6 +191,8 @@ export class Obfious {
       || "unknown";
   }
 
+  private lastFetchError = "";
+
   private async fetchBundle(): Promise<string | null> {
     try {
       const workerUrl = await this.getWorkerUrl();
@@ -199,11 +201,13 @@ export class Obfious {
         headers: { "x-obfious-worker-url": workerUrl },
       });
       if (!res.ok) {
+        this.lastFetchError = `API returned ${res.status}`;
         console.error(`[obfious] Bundle fetch failed: ${res.status} ${res.statusText}`);
         return null;
       }
       return await res.text();
     } catch (err) {
+      this.lastFetchError = `${err}`;
       console.error("[obfious] Bundle fetch error:", err);
       return null;
     }
@@ -213,11 +217,13 @@ export class Obfious {
     try {
       const res = await this.authedFetch("/w", { method: "GET" });
       if (!res.ok) {
+        this.lastFetchError = `API returned ${res.status}`;
         console.error(`[obfious] Worker fetch failed: ${res.status} ${res.statusText}`);
         return null;
       }
       return await res.text();
     } catch (err) {
+      this.lastFetchError = `${err}`;
       console.error("[obfious] Worker fetch error:", err);
       return null;
     }
@@ -254,11 +260,18 @@ export class Obfious {
         headers[k.replace(/[\r\n]/g, "")] = String(v).replace(/[\r\n]/g, "");
       }
     }
-    return this.authedFetch(originalPath, {
-      method: "POST",
-      headers,
-      body: request.body ?? undefined,
-    });
+    try {
+      const res = await this.authedFetch(originalPath, {
+        method: "POST",
+        headers,
+        body: request.body ?? undefined,
+      });
+      console.log(`[obfious] Stream proxy: API responded ${res.status}, body=${!!res.body}`);
+      return res;
+    } catch (err) {
+      console.error("[obfious] Stream proxy error:", err);
+      return new Response(null, { status: 502 });
+    }
   }
 
   private async validateToken(
