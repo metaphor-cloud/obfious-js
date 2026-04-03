@@ -24,13 +24,13 @@ npm install @obfious/js
 import { Obfious } from "@obfious/js";
 
 const obfious = new Obfious({
+  keyId: process.env.OBFIOUS_KEY_ID,
+  secret: process.env.OBFIOUS_SECRET,
   includePaths: ["/api/"],
 });
 
-const creds = { keyId: process.env.OBFIOUS_KEY_ID, secret: process.env.OBFIOUS_SECRET };
-
 // In your request handler:
-const result = await obfious.protect(request, creds);
+const result = await obfious.protect(request);
 if (result.response) return result.response;
 // result.deviceId is set when token is valid
 
