@@ -14,7 +14,6 @@ const CREDS = { keyId: "k", secret: "test-secret" };
 const VECTOR_SECRET = "test-secret-cross-lang";
 const VECTOR_WINDOW = 5765200;
 const VECTOR_BOOTSTRAP_KEY = "408a60c236";
-const VECTOR_WORKER_KEY = "3w8e4851db";
 
 async function deriveWithFixedTime(fn: () => Promise<string>) {
   const original = Date.now;
@@ -32,25 +31,12 @@ describe("@obfious/js proxy", () => {
       const url = await deriveWithFixedTime(() => ob.getScriptUrl());
       expect(url.split("?")[1].split("=")[0]).toBe(VECTOR_BOOTSTRAP_KEY);
     });
-
-    it("worker key matches", async () => {
-      const ob = new Obfious({ keyId: "k", secret: VECTOR_SECRET });
-      const url = await deriveWithFixedTime(() => ob.getWorkerUrl());
-      expect(url.split("?")[1].split("=")[0]).toBe(VECTOR_WORKER_KEY);
-    });
   });
 
   describe("key derivation", () => {
     it("getScriptUrl returns /?{10hex}={8alphanum}", async () => {
       const ob = new Obfious(CREDS);
       expect(await ob.getScriptUrl()).toMatch(/^\/\?[0-9a-f]{10}=[a-zA-Z0-9]{8}$/);
-    });
-
-    it("getWorkerUrl has 10 chars with 'w'", async () => {
-      const ob = new Obfious(CREDS);
-      const key = (await ob.getWorkerUrl()).split("?")[1].split("=")[0];
-      expect(key).toHaveLength(10);
-      expect(key).toContain("w");
     });
 
     it("same secret = same key", async () => {
@@ -84,7 +70,7 @@ describe("@obfious/js proxy", () => {
     });
   });
 
-  describe("protect — bootstrap/worker", () => {
+  describe("protect — bootstrap", () => {
     it("serves bundle on valid bootstrap key", async () => {
       const ob = new Obfious(CREDS);
       const url = "https://example.com" + await ob.getScriptUrl();
@@ -92,15 +78,6 @@ describe("@obfious/js proxy", () => {
       const result = await ob.protect(new Request(url));
       expect(result.response).not.toBeNull();
       expect(await result.response!.text()).toBe("bundle");
-    });
-
-    it("serves worker on valid worker key", async () => {
-      const ob = new Obfious(CREDS);
-      const url = "https://example.com" + await ob.getWorkerUrl();
-      mockFetch.mockResolvedValueOnce(new Response("worker"));
-      const result = await ob.protect(new Request(url));
-      expect(result.response).not.toBeNull();
-      expect(await result.response!.text()).toBe("worker");
     });
 
     it("passes through GET /", async () => {

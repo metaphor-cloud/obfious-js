@@ -3,7 +3,7 @@
  *
  * Matches Obfious POST traffic by: POST + static file extension + JSON array body.
  * Forwards to API preserving the original random path.
- * Serves bootstrap script and worker at time-rotating URLs.
+ * Serves bootstrap script at time-rotating URL.
  */
 
 export interface ObfiousConfig {
@@ -63,13 +63,6 @@ export class Obfious {
     return `/?${key}=${this.randomValue}`;
   }
 
-  /** Get the worker URL with time-rotating query param (includes type marker). */
-  async getWorkerUrl(): Promise<string> {
-    const key = await deriveWorkerKey(this.creds.secret);
-    this.ensureRandomValue();
-    return `/?${key}=${this.randomValue}`;
-  }
-
   /** Generate script tag HTML — no defer, must load in <head> before other scripts. */
   async scriptTag(opts?: { nonce?: string }): Promise<string> {
     const url = await this.getScriptUrl();
@@ -85,7 +78,7 @@ export class Obfious {
 
     const url = new URL(request.url);
 
-    // --- Serve bootstrap script or worker ---
+    // --- Serve bootstrap script ---
     if (request.method === "GET") {
       if (url.pathname === "/") {
         for (const [paramKey] of url.searchParams) {
@@ -98,20 +91,6 @@ export class Obfious {
                   headers: {
                     "Content-Type": "application/javascript",
                     "Cache-Control": bundle ? "private, max-age=300" : "no-store",
-                  },
-                },
-              ),
-            };
-          }
-          if (await isValidWorkerKey(this.creds.secret, paramKey)) {
-            const worker = await this.fetchWorker();
-            return {
-              response: new Response(
-                worker ?? `console.error("[obfious] Failed to load worker: ${this.lastFetchError}");`,
-                {
-                  headers: {
-                    "Content-Type": "application/javascript",
-                    "Cache-Control": worker ? "private, max-age=300" : "no-store",
                   },
                 },
               ),
@@ -135,12 +114,8 @@ export class Obfious {
       }
     }
 
-    // --- Match Obfious POST traffic ---
+    // --- Match Obfious POST traffic (JSON array) ---
     if (request.method === "POST" && STATIC_EXT_RE.test(url.pathname)) {
-      const contentType = request.headers.get("Content-Type") || "";
-      if (contentType === "application/octet-stream") {
-        return { response: await this.forwardStreamToApi(request, url.pathname) };
-      }
       const cloned = request.clone();
       const bodyBytes = new Uint8Array(await cloned.arrayBuffer());
       if (bodyBytes.length > 0 && bodyBytes[0] === 0x5B) { // '['
@@ -195,10 +170,8 @@ export class Obfious {
 
   private async fetchBundle(): Promise<string | null> {
     try {
-      const workerUrl = await this.getWorkerUrl();
       const res = await this.authedFetch("/b", {
         method: "GET",
-        headers: { "x-obfious-worker-url": workerUrl },
       });
       if (!res.ok) {
         this.lastFetchError = `API returned ${res.status}`;
@@ -209,22 +182,6 @@ export class Obfious {
     } catch (err) {
       this.lastFetchError = `${err}`;
       console.error("[obfious] Bundle fetch error:", err);
-      return null;
-    }
-  }
-
-  private async fetchWorker(): Promise<string | null> {
-    try {
-      const res = await this.authedFetch("/w", { method: "GET" });
-      if (!res.ok) {
-        this.lastFetchError = `API returned ${res.status}`;
-        console.error(`[obfious] Worker fetch failed: ${res.status} ${res.statusText}`);
-        return null;
-      }
-      return await res.text();
-    } catch (err) {
-      this.lastFetchError = `${err}`;
-      console.error("[obfious] Worker fetch error:", err);
       return null;
     }
   }
@@ -251,32 +208,6 @@ export class Obfious {
       console.error(`[obfious] forwardToApi ${originalPath}: ${res.status} ${errText}`);
     }
     return res;
-  }
-
-  private async forwardStreamToApi(
-    request: Request, originalPath: string,
-  ): Promise<Response> {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/octet-stream",
-      "x-obfious-ip": this.getIp(request),
-    };
-    if (this.config.getPlatformSignals) {
-      for (const [k, v] of Object.entries(this.config.getPlatformSignals(request))) {
-        headers[k.replace(/[\r\n]/g, "")] = String(v).replace(/[\r\n]/g, "");
-      }
-    }
-    try {
-      const res = await this.authedFetch(originalPath, {
-        method: "POST",
-        headers,
-        body: request.body ?? undefined,
-      });
-      console.log(`[obfious] Stream proxy: API responded ${res.status}, body=${!!res.body}`);
-      return res;
-    } catch (err) {
-      console.error("[obfious] Stream proxy error:", err);
-      return new Response(null, { status: 502 });
-    }
   }
 
   private async validateToken(
@@ -340,33 +271,6 @@ async function isValidBootstrapKey(secret: string, candidate: string): Promise<b
   if (candidate.length !== 10 || !/^[0-9a-f]{10}$/.test(candidate)) return false;
   for (const offset of [-1, 0, 1]) {
     if (await deriveBootstrapKey(secret, offset) === candidate) return true;
-  }
-  return false;
-}
-
-async function deriveWorkerKey(secret: string, windowOffset = 0): Promise<string> {
-  const window = Math.floor(Date.now() / 300_000) + windowOffset;
-  const position = (window % 7) + 1;
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
-  );
-  const sig = await crypto.subtle.sign(
-    "HMAC", key, new TextEncoder().encode("obfious-worker-v1:" + window),
-  );
-  const hex = hexEncode(new Uint8Array(sig)).slice(0, 9);
-  return hex.slice(0, position) + "w" + hex.slice(position);
-}
-
-async function isValidWorkerKey(secret: string, candidate: string): Promise<boolean> {
-  if (candidate.length !== 10) return false;
-  const wIdx = candidate.indexOf("w");
-  if (wIdx < 1 || wIdx > 7) return false;
-  if (candidate.lastIndexOf("w") !== wIdx) return false;
-  const withoutW = candidate.slice(0, wIdx) + candidate.slice(wIdx + 1);
-  if (!/^[0-9a-f]{9}$/.test(withoutW)) return false;
-  for (const offset of [-1, 0, 1]) {
-    if (await deriveWorkerKey(secret, offset) === candidate) return true;
   }
   return false;
 }
