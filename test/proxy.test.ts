@@ -10,6 +10,27 @@ vi.stubGlobal("fetch", mockFetch);
 
 const CREDS = { keyId: "k", secret: "test-secret" };
 
+// Helper: build a valid derived auth header name for testing
+const HEX_CHARS = "0123456789abcdef";
+function rotHex(s: string, n: number): string {
+  return s.split("").map(c => {
+    const i = HEX_CHARS.indexOf(c);
+    return i < 0 ? c : HEX_CHARS[(i + n) % 16];
+  }).join("");
+}
+async function buildAuthHeaderName(secret: string): Promise<string> {
+  const window = Math.floor(Date.now() / 300_000);
+  const keyBytes = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const keySig = await crypto.subtle.sign("HMAC", keyBytes, new TextEncoder().encode("obfious-bootstrap-v1:" + window));
+  const bootstrapKey = Array.from(new Uint8Array(keySig), b => b.toString(16).padStart(2, "0")).join("").slice(0, 10);
+  const valSig = await crypto.subtle.sign("HMAC", keyBytes, new TextEncoder().encode(bootstrapKey));
+  const hmac8 = Array.from(new Uint8Array(valSig), b => b.toString(16).padStart(2, "0")).join("").slice(0, 8);
+  return `x-${bootstrapKey}-${rotHex(hmac8, 13)}abcd`;
+}
+
 // Cross-language test vectors
 const VECTOR_SECRET = "test-secret-cross-lang";
 const VECTOR_WINDOW = 5765200;
@@ -34,9 +55,9 @@ describe("@obfious/js proxy", () => {
   });
 
   describe("key derivation", () => {
-    it("getScriptUrl returns /?{10hex}={8alphanum}", async () => {
+    it("getScriptUrl returns /?{10hex}={12chars}", async () => {
       const ob = new Obfious(CREDS);
-      expect(await ob.getScriptUrl()).toMatch(/^\/\?[0-9a-f]{10}=[a-zA-Z0-9]{8}$/);
+      expect(await ob.getScriptUrl()).toMatch(/^\/\?[0-9a-f]{10}=[0-9a-f]{8}[a-zA-Z0-9]{4}$/);
     });
 
     it("same secret = same key", async () => {
@@ -104,7 +125,7 @@ describe("@obfious/js proxy", () => {
     it("401 on POST without static ext", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       const result = await ob.protect(new Request("https://example.com/api/data", {
-        method: "POST", headers: { "Content-Type": "application/json", "x-req-auth": "" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: '{"name":"test"}',
       }));
       expect(result.response!.status).toBe(401);
@@ -138,24 +159,25 @@ describe("@obfious/js proxy", () => {
   });
 
   describe("protect — auth", () => {
-    it("401 when x-req-auth missing", async () => {
+    it("401 when no valid auth header present", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       expect((await ob.protect(new Request("https://example.com/api/data"))).response!.status).toBe(401);
     });
 
-    it("validates token + returns deviceId", async () => {
+    it("validates token + returns deviceId with derived header", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       mockFetch.mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/validate"))
           return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc" }));
         return new Response("", { status: 404 });
       });
+      const headerName = await buildAuthHeaderName(CREDS.secret);
       const payload = new Uint8Array(17);
       payload[0] = 0x21;
       payload.set([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04], 1);
       const b64 = btoa(String.fromCharCode(...payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
       const result = await ob.protect(new Request("https://example.com/api/data", {
-        headers: { "x-req-auth": b64 + ".sig" },
+        headers: { [headerName]: b64 + ".sig" },
       }));
       expect(result.response).toBeNull();
       expect(result.deviceId).toBe("dev_abc");
@@ -164,11 +186,12 @@ describe("@obfious/js proxy", () => {
     it("401 on invalid validation", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ valid: false })));
+      const headerName = await buildAuthHeaderName(CREDS.secret);
       const payload = new Uint8Array(17);
       payload[0] = 0x21;
       const b64 = btoa(String.fromCharCode(...payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
       const result = await ob.protect(new Request("https://example.com/api/data", {
-        headers: { "x-req-auth": b64 + ".bad" },
+        headers: { [headerName]: b64 + ".bad" },
       }));
       expect(result.response!.status).toBe(401);
     });

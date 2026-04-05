@@ -59,7 +59,10 @@ export class Obfious {
   async getScriptUrl(): Promise<string> {
     if (this.config.scriptPath) return this.config.scriptPath;
     const key = await deriveBootstrapKey(this.creds.secret);
-    this.ensureRandomValue();
+    if (!this.randomValue || Date.now() - this.randomValueCreatedAt > RANDOM_VALUE_TTL) {
+      this.randomValue = await deriveBootstrapValue(this.creds.secret, key);
+      this.randomValueCreatedAt = Date.now();
+    }
     return `/?${key}=${this.randomValue}`;
   }
 
@@ -129,7 +132,7 @@ export class Obfious {
       if (!this.config.includePaths.some(p => url.pathname.startsWith(p))) return { response: null };
     }
 
-    const authHdr = request.headers.get("x-req-auth");
+    const authHdr = await findAuthHeader(this.creds.secret, request);
     if (!authHdr) return { response: new Response(null, { status: 401 }) };
 
     const dot = authHdr.indexOf(".");
@@ -150,13 +153,6 @@ export class Obfious {
   }
 
   // --- Private ---
-
-  private ensureRandomValue(): void {
-    if (!this.randomValue || Date.now() - this.randomValueCreatedAt > RANDOM_VALUE_TTL) {
-      this.randomValue = generateRandom(8);
-      this.randomValueCreatedAt = Date.now();
-    }
-  }
 
   private getIp(request: Request): string {
     if (this.config.getClientIp) return this.config.getClientIp(request);
@@ -315,4 +311,43 @@ function generateRandom(length: number): string {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   const bytes = crypto.getRandomValues(new Uint8Array(length));
   return Array.from(bytes, b => chars[b % chars.length]).join("");
+}
+
+// --- Auth header derivation ---
+
+const HEX_CHARS = "0123456789abcdef";
+
+function rotHex(s: string, n: number): string {
+  return s.split("").map(c => {
+    const i = HEX_CHARS.indexOf(c);
+    if (i < 0) return c;
+    return HEX_CHARS[(i + n) % 16];
+  }).join("");
+}
+
+async function deriveBootstrapValue(secret: string, bootstrapKey: string): Promise<string> {
+  const hmac8 = (await hmacSign(secret, bootstrapKey)).slice(0, 8);
+  const rotation = crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0 ? 13 : 14;
+  return rotHex(hmac8, rotation) + generateRandom(4);
+}
+
+async function findAuthHeader(secret: string, request: Request): Promise<string | null> {
+  for (const [name, value] of request.headers) {
+    if (!name.startsWith("x-") || name.length < 14) continue;
+    const rest = name.slice(2);
+    const dashIdx = rest.indexOf("-");
+    if (dashIdx < 1) continue;
+
+    const keyPart = rest.slice(0, dashIdx);
+    const valuePart = rest.slice(dashIdx + 1);
+    if (!/^[0-9a-f]+$/.test(keyPart) || valuePart.length < 8) continue;
+
+    const rotated8 = valuePart.slice(0, valuePart.length - 4);
+    if (rotated8.length !== 8 || !/^[0-9a-f]{8}$/.test(rotated8)) continue;
+
+    const expectedHmac = (await hmacSign(secret, keyPart)).slice(0, 8);
+    if (rotHex(rotated8, 16 - 13) === expectedHmac) return value;
+    if (rotHex(rotated8, 16 - 14) === expectedHmac) return value;
+  }
+  return null;
 }
