@@ -49,6 +49,7 @@ export class Obfious {
   private creds: ObfiousCreds;
   private randomValue: string | null = null;
   private randomValueCreatedAt = 0;
+  private cachedKey: string | null = null;
 
   constructor(config: ObfiousConfig) {
     this.config = { ...config, apiUrl: config.apiUrl ?? "https://api.obfious.com" };
@@ -59,9 +60,10 @@ export class Obfious {
   async getScriptUrl(): Promise<string> {
     if (this.config.scriptPath) return this.config.scriptPath;
     const key = await deriveBootstrapKey(this.creds.secret);
-    if (!this.randomValue || Date.now() - this.randomValueCreatedAt > RANDOM_VALUE_TTL) {
+    if (!this.randomValue || this.cachedKey !== key || Date.now() - this.randomValueCreatedAt > RANDOM_VALUE_TTL) {
       this.randomValue = await deriveBootstrapValue(this.creds.secret, key);
       this.randomValueCreatedAt = Date.now();
+      this.cachedKey = key;
     }
     return `/?${key}=${this.randomValue}`;
   }
@@ -348,6 +350,14 @@ async function findAuthHeader(secret: string, request: Request): Promise<string 
     const expectedHmac = (await hmacSign(secret, keyPart)).slice(0, 8);
     if (rotHex(rotated8, 16 - 13) === expectedHmac) return value;
     if (rotHex(rotated8, 16 - 14) === expectedHmac) return value;
+
+    // Fallback: value may have been derived from an adjacent-window key
+    for (const offset of [-1, 1]) {
+      const altKey = await deriveBootstrapKey(secret, offset);
+      const altHmac = (await hmacSign(secret, altKey)).slice(0, 8);
+      if (rotHex(rotated8, 16 - 13) === altHmac) return value;
+      if (rotHex(rotated8, 16 - 14) === altHmac) return value;
+    }
   }
   return null;
 }
