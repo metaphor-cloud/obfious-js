@@ -25,6 +25,12 @@ export interface ObfiousConfig {
   getPlatformSignals?: (request: Request) => Record<string, string>;
   /** HMAC key for user identifier encryption */
   privateKey?: string;
+  /**
+   * Header name to read JA4 TLS fingerprint from (default: "x-cf-ja4").
+   * Set this to match your reverse proxy's header (e.g. "X-JA4" for nginx).
+   * On Cloudflare Workers, JA4 is also auto-extracted from request.cf.
+   */
+  jaHeaderName?: string;
 }
 
 export interface ObfiousCreds {
@@ -164,6 +170,17 @@ export class Obfious {
       || "unknown";
   }
 
+  /** Extract JA4 TLS fingerprint from Cloudflare request.cf or configured header. */
+  private extractJA4(request: Request): string | undefined {
+    // Cloudflare Workers: request.cf.botManagement.ja4
+    const cf = (request as any).cf;
+    if (cf?.botManagement?.ja4) return cf.botManagement.ja4;
+
+    // Configured header (default: x-cf-ja4). Useful when behind nginx/HAProxy.
+    const headerName = this.config.jaHeaderName ?? "x-cf-ja4";
+    return request.headers.get(headerName) ?? undefined;
+  }
+
   private lastFetchError = "";
 
   private async fetchBundle(): Promise<string | null> {
@@ -191,10 +208,19 @@ export class Obfious {
       "Content-Type": "application/json",
       "x-obfious-ip": this.getIp(request),
     };
+
+    // Custom platform signals callback (takes precedence)
     if (this.config.getPlatformSignals) {
       for (const [k, v] of Object.entries(this.config.getPlatformSignals(request))) {
         headers[k.replace(/[\r\n]/g, "")] = String(v).replace(/[\r\n]/g, "");
       }
+    }
+
+    // Auto-extract JA4 if not already provided by getPlatformSignals.
+    // Sources: Cloudflare request.cf (Workers) → configured header name.
+    if (!headers["x-cf-ja4"]) {
+      const ja4 = this.extractJA4(request);
+      if (ja4) headers["x-cf-ja4"] = ja4;
     }
     const res = await this.authedFetch(originalPath, {
       method: "POST",
