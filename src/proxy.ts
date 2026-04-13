@@ -172,13 +172,27 @@ export class Obfious {
 
   /** Extract JA4 TLS fingerprint from Cloudflare request.cf or configured header. */
   private extractJA4(request: Request): string | undefined {
+    let ja4: string | undefined;
+
     // Cloudflare Workers: request.cf.botManagement.ja4
     const cf = (request as any).cf;
-    if (cf?.botManagement?.ja4) return cf.botManagement.ja4;
+    const cfJa4 = cf?.botManagement?.ja4;
+    if (cfJa4 && typeof cfJa4 === "string") {
+      ja4 = cfJa4;
+    }
 
-    // Configured header (default: x-cf-ja4). Useful when behind nginx/HAProxy.
-    const headerName = this.config.jaHeaderName ?? "x-cf-ja4";
-    return request.headers.get(headerName) ?? undefined;
+    // Configured header fallback (default: x-cf-ja4). Useful behind nginx/HAProxy.
+    if (!ja4) {
+      const headerName = this.config.jaHeaderName || "x-cf-ja4";
+      ja4 = request.headers.get(headerName) ?? undefined;
+    }
+
+    // Sanitize: strip CRLF and reject obviously invalid values
+    if (ja4) {
+      ja4 = ja4.replace(/[\r\n]/g, "");
+      if (ja4.length > 200) return undefined;
+    }
+    return ja4 || undefined;
   }
 
   private lastFetchError = "";
@@ -218,7 +232,7 @@ export class Obfious {
 
     // Auto-extract JA4 if not already provided by getPlatformSignals.
     // Sources: Cloudflare request.cf (Workers) → configured header name.
-    if (!headers["x-cf-ja4"]) {
+    if (!("x-cf-ja4" in headers)) {
       const ja4 = this.extractJA4(request);
       if (ja4) headers["x-cf-ja4"] = ja4;
     }
