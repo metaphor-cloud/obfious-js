@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { build } from "esbuild";
-import { writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
+
+const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 
 mkdirSync("dist", { recursive: true });
 
@@ -24,6 +26,7 @@ for (const [name, opts] of Object.entries(entries)) {
     treeShaking: true,
     legalComments: "none",
     external: opts.external,
+    define: { "__OBFIOUS_VERSION__": JSON.stringify(pkg.version) },
   });
 
   writeFileSync(`dist/${name}.js`, result.outputFiles[0].text);

@@ -47,6 +47,9 @@ const HDR_KEY = "x-obfious-key";
 const HDR_SIG = "x-obfious-sig";
 const HDR_TS = "x-obfious-ts";
 
+declare const __OBFIOUS_VERSION__: string;
+const PROXY_VERSION = `js/${typeof __OBFIOUS_VERSION__ !== "undefined" ? __OBFIOUS_VERSION__ : "unknown"}`;
+
 const STATIC_EXT_RE = /\.(json|js|gif|png|woff2|css)$/;
 const RANDOM_VALUE_TTL = 900_000; // 15 min
 
@@ -201,6 +204,7 @@ export class Obfious {
     try {
       const res = await this.authedFetch("/b", {
         method: "GET",
+        headers: { "x-obfious-proxy-version": PROXY_VERSION },
       });
       if (!res.ok) {
         this.lastFetchError = `API returned ${res.status}`;
