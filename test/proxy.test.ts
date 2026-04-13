@@ -196,4 +196,55 @@ describe("@obfious/js proxy", () => {
       expect(result.response!.status).toBe(401);
     });
   });
+
+  describe("graceful degradation", () => {
+    async function protectedRequest(): Promise<Request> {
+      const headerName = await buildAuthHeaderName(CREDS.secret);
+      const payload = new Uint8Array(17);
+      payload[0] = 0x21;
+      payload.set([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04], 1);
+      const b64 = btoa(String.fromCharCode(...payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      return new Request("https://example.com/api/data", {
+        headers: { [headerName]: b64 + ".sig" },
+      });
+    }
+
+    it("passes through when /validate returns 500", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockResolvedValue(new Response("Internal Server Error", { status: 500 }));
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+    });
+
+    it("passes through when /validate returns 403 (bad creds)", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockResolvedValue(new Response("Forbidden", { status: 403 }));
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+    });
+
+    it("passes through on network error", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockRejectedValue(new Error("fetch failed"));
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+    });
+
+    it("still blocks when API returns 200 with valid: false", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ valid: false })));
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response!.status).toBe(401);
+    });
+
+    it("forwardToApi returns 502 on network error", async () => {
+      const ob = new Obfious(CREDS);
+      mockFetch.mockRejectedValue(new Error("connection refused"));
+      const result = await ob.protect(new Request("https://example.com/static/config.json", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: '["test"]',
+      }));
+      expect(result.response).not.toBeNull();
+      expect(result.response!.status).toBe(502);
+    });
+  });
 });

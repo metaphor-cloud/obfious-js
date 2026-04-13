@@ -89,7 +89,15 @@ export class Obfious {
     request: Request,
     user?: string,
   ): Promise<ProtectResult> {
+    try {
+      return await this._protect(request, user);
+    } catch (err) {
+      console.error("[obfious] unexpected error in protect, allowing request through:", err);
+      return { response: null };
+    }
+  }
 
+  private async _protect(request: Request, user?: string): Promise<ProtectResult> {
     const url = new URL(request.url);
 
     // --- Serve bootstrap script ---
@@ -240,16 +248,21 @@ export class Obfious {
       const ja4 = this.extractJA4(request);
       if (ja4) headers["x-cf-ja4"] = ja4;
     }
-    const res = await this.authedFetch(originalPath, {
-      method: "POST",
-      headers,
-      body: body.buffer as ArrayBuffer,
-    });
-    if (!res.ok) {
-      const errText = await res.clone().text().catch(() => "");
-      console.error(`[obfious] forwardToApi ${originalPath}: ${res.status} ${errText}`);
+    try {
+      const res = await this.authedFetch(originalPath, {
+        method: "POST",
+        headers,
+        body: body.buffer as ArrayBuffer,
+      });
+      if (!res.ok) {
+        const errText = await res.clone().text().catch(() => "");
+        console.error(`[obfious] forwardToApi ${originalPath}: ${res.status} ${errText}`);
+      }
+      return res;
+    } catch (err) {
+      console.error("[obfious] forwardToApi error, allowing request through:", err);
+      return new Response(null, { status: 502 });
     }
-    return res;
   }
 
   private async validateToken(
@@ -264,9 +277,8 @@ export class Obfious {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        console.error(`[obfious] Validate failed: ${res.status} ${errText}`);
-        return { valid: false };
+        console.error(`[obfious] credential/API error during token validation (HTTP ${res.status}), allowing request through`);
+        return { valid: true };
       }
       const result = await res.json() as any;
       if (result.valid !== true) {
@@ -274,8 +286,8 @@ export class Obfious {
       }
       return { valid: result.valid === true, deviceId: result.deviceId };
     } catch (err) {
-      console.error("[obfious] Validate error:", err);
-      return { valid: false };
+      console.error("[obfious] API unreachable during token validation, allowing request through:", err);
+      return { valid: true };
     }
   }
 
