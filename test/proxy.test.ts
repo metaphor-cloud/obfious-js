@@ -79,15 +79,34 @@ describe("@obfious/js proxy", () => {
   });
 
   describe("scriptTag", () => {
-    it("no defer", async () => {
-      const ob = new Obfious({ ...CREDS, scriptPath: "/test.js" });
-      expect(await ob.scriptTag()).toBe('<script src="/test.js"></script>');
+    it("returns shim (sync) + bootstrap (defer)", async () => {
+      const ob = new Obfious(CREDS);
+      const tags = await ob.scriptTag();
+      const lines = tags.split("\n");
+      expect(lines).toHaveLength(2);
+      // Shim: no defer
+      expect(lines[0]).toMatch(/^<script src="\/\?[0-9a-f]{10}=1"><\/script>$/);
+      // Bootstrap: has defer
+      expect(lines[1]).toMatch(/^<script src="\/\?[0-9a-f]{10}=[0-9a-f]{8}[a-zA-Z0-9]{4}" defer><\/script>$/);
     });
 
-    it("nonce", async () => {
-      const ob = new Obfious({ ...CREDS, scriptPath: "/test.js" });
-      expect(await ob.scriptTag({ nonce: "abc" }))
-        .toBe('<script src="/test.js" nonce="abc"></script>');
+    it("includes nonce on both tags", async () => {
+      const ob = new Obfious(CREDS);
+      const tags = await ob.scriptTag({ nonce: "xyz" });
+      const lines = tags.split("\n");
+      expect(lines[0]).toContain('nonce="xyz"');
+      expect(lines[1]).toContain('nonce="xyz"');
+    });
+
+    it("shim tag and bootstrap tag have different keys", async () => {
+      const ob = new Obfious(CREDS);
+      const tags = await ob.scriptTag();
+      const lines = tags.split("\n");
+      const shimKey = lines[0].match(/\?([0-9a-f]{10})=/)?.[1];
+      const bootKey = lines[1].match(/\?([0-9a-f]{10})=/)?.[1];
+      expect(shimKey).toBeDefined();
+      expect(bootKey).toBeDefined();
+      expect(shimKey).not.toBe(bootKey);
     });
   });
 
@@ -283,38 +302,6 @@ describe("@obfious/js proxy", () => {
       // Shim key must differ from bootstrap key since different HMAC prefix
       expect(shimKey).not.toBe(VECTOR_BOOTSTRAP_KEY);
       expect(shimKey).toMatch(/^[0-9a-f]{10}$/);
-    });
-  });
-
-  describe("shim — scriptTags", () => {
-    it("returns shim (sync) + bootstrap (defer)", async () => {
-      const ob = new Obfious(CREDS);
-      const tags = await ob.scriptTags();
-      const lines = tags.split("\n");
-      expect(lines).toHaveLength(2);
-      // Shim: no defer
-      expect(lines[0]).toMatch(/^<script src="\/\?[0-9a-f]{10}=1"><\/script>$/);
-      // Bootstrap: has defer
-      expect(lines[1]).toMatch(/^<script src="\/\?[0-9a-f]{10}=[0-9a-f]{8}[a-zA-Z0-9]{4}" defer><\/script>$/);
-    });
-
-    it("includes nonce on both tags", async () => {
-      const ob = new Obfious(CREDS);
-      const tags = await ob.scriptTags({ nonce: "xyz" });
-      const lines = tags.split("\n");
-      expect(lines[0]).toContain('nonce="xyz"');
-      expect(lines[1]).toContain('nonce="xyz"');
-    });
-
-    it("shim tag and bootstrap tag have different keys", async () => {
-      const ob = new Obfious(CREDS);
-      const tags = await ob.scriptTags();
-      const lines = tags.split("\n");
-      const shimKey = lines[0].match(/\?([0-9a-f]{10})=/)?.[1];
-      const bootKey = lines[1].match(/\?([0-9a-f]{10})=/)?.[1];
-      expect(shimKey).toBeDefined();
-      expect(bootKey).toBeDefined();
-      expect(shimKey).not.toBe(bootKey);
     });
   });
 

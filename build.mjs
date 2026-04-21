@@ -60,7 +60,6 @@ export declare class Obfious {
     getScriptUrl(): Promise<string>;
     getShimUrl(): Promise<string>;
     scriptTag(opts?: { nonce?: string }): Promise<string>;
-    scriptTags(opts?: { nonce?: string }): Promise<string>;
     protect(request: Request, user?: string): Promise<ProtectResult>;
 }
 `);

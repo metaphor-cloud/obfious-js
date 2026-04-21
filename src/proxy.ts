@@ -84,13 +84,6 @@ export class Obfious {
     return `/?${key}=${this.randomValue}`;
   }
 
-  /** Generate script tag HTML — no defer, must load in <head> before other scripts. */
-  async scriptTag(opts?: { nonce?: string }): Promise<string> {
-    const url = await this.getScriptUrl();
-    const nonceAttr = opts?.nonce ? ` nonce="${opts.nonce}"` : "";
-    return `<script src="${url}"${nonceAttr}></script>`;
-  }
-
   /** Get the shim script URL with time-rotating query param. */
   async getShimUrl(): Promise<string> {
     const key = await deriveShimKey(this.creds.secret);
@@ -98,7 +91,7 @@ export class Obfious {
   }
 
   /** Generate shim + bootstrap script tags. Shim: sync (tiny fetch hook). Bootstrap: defer (non-blocking). */
-  async scriptTags(opts?: { nonce?: string }): Promise<string> {
+  async scriptTag(opts?: { nonce?: string }): Promise<string> {
     const shimUrl = await this.getShimUrl();
     const bootstrapUrl = await this.getScriptUrl();
     const nonceAttr = opts?.nonce ? ` nonce="${opts.nonce}"` : "";
