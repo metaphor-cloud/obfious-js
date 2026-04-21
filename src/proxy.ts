@@ -90,13 +90,13 @@ export class Obfious {
     return `/?${key}=1`;
   }
 
-  /** Generate shim + bootstrap script tags. Shim: sync (tiny fetch hook). Bootstrap: defer (non-blocking). */
+  /** Generate shim + bootstrap script tags. Shim: sync (tiny fetch hook). Bootstrap: async (non-blocking). */
   async scriptTag(opts?: { nonce?: string }): Promise<string> {
     const shimUrl = await this.getShimUrl();
     const bootstrapUrl = await this.getScriptUrl();
     const nonceAttr = opts?.nonce ? `nonce="${opts.nonce}"` : "";
     return `<script src="${shimUrl}" ${nonceAttr}></script>\n`
-      + `<script src="${bootstrapUrl}" defer fetchpriority="low" ${nonceAttr}></script>`;
+      + `<script src="${bootstrapUrl}" async fetchpriority="low" ${nonceAttr}></script>`;
   }
 
   /** Main entry: handle a request */
