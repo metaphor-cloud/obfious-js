@@ -33,7 +33,7 @@ for (const [name, opts] of Object.entries(entries)) {
   console.log(`  ${name}.js (${result.outputFiles[0].text.length} bytes)`);
 }
 
-// --- Type declarations (v2.1) ---
+// --- Type declarations (v2.2) ---
 
 writeFileSync("dist/index.d.ts", `export interface ObfiousConfig {
     keyId: string;
@@ -45,6 +45,7 @@ writeFileSync("dist/index.d.ts", `export interface ObfiousConfig {
     privateKey?: string;
     getClientIp?: (request: Request) => string;
     getPlatformSignals?: (request: Request) => Record<string, string>;
+    jaHeaderName?: string;
 }
 export interface ObfiousCreds {
     keyId: string;
@@ -57,8 +58,9 @@ export interface ProtectResult {
 export declare class Obfious {
     constructor(config: ObfiousConfig);
     getScriptUrl(): Promise<string>;
-    getWorkerUrl(): Promise<string>;
+    getShimUrl(): Promise<string>;
     scriptTag(opts?: { nonce?: string }): Promise<string>;
+    scriptTags(opts?: { nonce?: string }): Promise<string>;
     protect(request: Request, user?: string): Promise<ProtectResult>;
 }
 `);

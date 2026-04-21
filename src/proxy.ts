@@ -53,6 +53,13 @@ const PROXY_VERSION = `js/${typeof __OBFIOUS_VERSION__ !== "undefined" ? __OBFIO
 const STATIC_EXT_RE = /\.(json|js|gif|png|woff2|css)$/;
 const RANDOM_VALUE_TTL = 900_000; // 15 min
 
+/** Fetch hook shim (~500 bytes). Hooks window.fetch immediately, queues same-origin
+ *  requests until the full bootstrap activates via window.__obf_shim.r().
+ *  - Cross-origin requests pass through immediately (proper URL origin check)
+ *  - Respects AbortSignal on queued fetches
+ *  - Falls back to native fetch after 15s if bootstrap never loads */
+const SHIM_JS = `(function(){if(window.__obf_shim)return;var f=window.fetch.bind(window);var h,rr,p=new Promise(function(r){rr=r});var o=location.origin;function xo(i){try{var u=typeof i==="string"?i:(i instanceof URL?i.href:(i&&i.url||""));if(!u||u[0]==="/")return false;return new URL(u).origin!==o}catch(e){return false}}window.fetch=function(i,n){if(h)return h(i,n);if(xo(i))return f(i,n);var s=n&&n.signal;if(s&&s.aborted)return Promise.reject(new DOMException("The operation was aborted.","AbortError"));return new Promise(function(res,rej){var d=0;function ab(){if(!d){d=1;rej(new DOMException("The operation was aborted.","AbortError"))}}if(s)s.addEventListener("abort",ab);p.then(function(){if(s)s.removeEventListener("abort",ab);if(!d){d=1;res(h(i,n))}})})};setTimeout(function(){if(!h){h=f;rr()}},15000);window.__obf_shim={f:f,r:function(x){h=x;rr()}}})();`;
+
 export class Obfious {
   private config: ObfiousConfig;
   private creds: ObfiousCreds;
@@ -84,6 +91,21 @@ export class Obfious {
     return `<script src="${url}"${nonceAttr}></script>`;
   }
 
+  /** Get the shim script URL with time-rotating query param. */
+  async getShimUrl(): Promise<string> {
+    const key = await deriveShimKey(this.creds.secret);
+    return `/?${key}=1`;
+  }
+
+  /** Generate shim + bootstrap script tags. Shim: sync (tiny fetch hook). Bootstrap: defer (non-blocking). */
+  async scriptTags(opts?: { nonce?: string }): Promise<string> {
+    const shimUrl = await this.getShimUrl();
+    const bootstrapUrl = await this.getScriptUrl();
+    const nonceAttr = opts?.nonce ? ` nonce="${opts.nonce}"` : "";
+    return `<script src="${shimUrl}"${nonceAttr}></script>\n`
+      + `<script src="${bootstrapUrl}" defer${nonceAttr}></script>`;
+  }
+
   /** Main entry: handle a request */
   async protect(
     request: Request,
@@ -100,12 +122,25 @@ export class Obfious {
   private async _protect(request: Request, user?: string): Promise<ProtectResult> {
     const url = new URL(request.url);
 
-    // --- Serve bootstrap script ---
+    // --- Serve shim or bootstrap script ---
     if (request.method === "GET") {
       if (url.pathname === "/") {
-        for (const [paramKey] of url.searchParams) {
+        for (const [paramKey, paramValue] of url.searchParams) {
+          // Shim: tiny fetch hook, served directly (no API call), cached 24h
+          if (await isValidShimKey(this.creds.secret, paramKey)) {
+            return {
+              response: new Response(SHIM_JS, {
+                headers: {
+                  "Content-Type": "application/javascript",
+                  "Cache-Control": "private, max-age=86400",
+                },
+              }),
+            };
+          }
           if (await isValidBootstrapKey(this.creds.secret, paramKey)) {
-            const bundle = await this.fetchBundle();
+            let bundle = await this.fetchBundle();
+            // Inject auth header name derived from the bootstrap URL query params
+            if (bundle) bundle = bundle.replace("__PATH_MANIFEST__", `x-${paramKey}-${paramValue}`);
             return {
               response: new Response(
                 bundle ?? `console.error("[obfious] Failed to load bundle: ${this.lastFetchError}");`,
@@ -325,6 +360,26 @@ async function isValidBootstrapKey(secret: string, candidate: string): Promise<b
   if (candidate.length !== 10 || !/^[0-9a-f]{10}$/.test(candidate)) return false;
   for (const offset of [-1, 0, 1]) {
     if (await deriveBootstrapKey(secret, offset) === candidate) return true;
+  }
+  return false;
+}
+
+async function deriveShimKey(secret: string, windowOffset = 0): Promise<string> {
+  const window = Math.floor(Date.now() / 300_000) + windowOffset;
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC", key, new TextEncoder().encode("obfious-shim-v1:" + window),
+  );
+  return hexEncode(new Uint8Array(sig)).slice(0, 10);
+}
+
+async function isValidShimKey(secret: string, candidate: string): Promise<boolean> {
+  if (candidate.length !== 10 || !/^[0-9a-f]{10}$/.test(candidate)) return false;
+  for (const offset of [-1, 0, 1]) {
+    if (await deriveShimKey(secret, offset) === candidate) return true;
   }
   return false;
 }

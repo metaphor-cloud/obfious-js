@@ -247,4 +247,113 @@ describe("@obfious/js proxy", () => {
       expect(result.response!.status).toBe(502);
     });
   });
+
+  describe("shim — key derivation", () => {
+    it("getShimUrl returns /?{10hex}=1", async () => {
+      const ob = new Obfious(CREDS);
+      expect(await ob.getShimUrl()).toMatch(/^\/\?[0-9a-f]{10}=1$/);
+    });
+
+    it("shim key differs from bootstrap key (same secret, same time)", async () => {
+      const ob = new Obfious(CREDS);
+      const shimUrl = await ob.getShimUrl();
+      const bootUrl = await ob.getScriptUrl();
+      const shimKey = shimUrl.split("?")[1].split("=")[0];
+      const bootKey = bootUrl.split("?")[1].split("=")[0];
+      expect(shimKey).not.toBe(bootKey);
+    });
+
+    it("shim key is stable across calls", async () => {
+      const ob = new Obfious(CREDS);
+      const u1 = await ob.getShimUrl();
+      const u2 = await ob.getShimUrl();
+      expect(u1).toBe(u2);
+    });
+
+    it("different secrets produce different shim keys", async () => {
+      const u1 = await new Obfious({ keyId: "a", secret: "secret-a" }).getShimUrl();
+      const u2 = await new Obfious({ keyId: "b", secret: "secret-b" }).getShimUrl();
+      expect(u1.split("=")[0]).not.toBe(u2.split("=")[0]);
+    });
+
+    it("cross-language: shim key uses obfious-shim-v1 prefix", async () => {
+      const ob = new Obfious({ keyId: "k", secret: VECTOR_SECRET });
+      const shimUrl = await deriveWithFixedTime(() => ob.getShimUrl());
+      const shimKey = shimUrl.split("?")[1].split("=")[0];
+      // Shim key must differ from bootstrap key since different HMAC prefix
+      expect(shimKey).not.toBe(VECTOR_BOOTSTRAP_KEY);
+      expect(shimKey).toMatch(/^[0-9a-f]{10}$/);
+    });
+  });
+
+  describe("shim — scriptTags", () => {
+    it("returns shim (sync) + bootstrap (defer)", async () => {
+      const ob = new Obfious(CREDS);
+      const tags = await ob.scriptTags();
+      const lines = tags.split("\n");
+      expect(lines).toHaveLength(2);
+      // Shim: no defer
+      expect(lines[0]).toMatch(/^<script src="\/\?[0-9a-f]{10}=1"><\/script>$/);
+      // Bootstrap: has defer
+      expect(lines[1]).toMatch(/^<script src="\/\?[0-9a-f]{10}=[0-9a-f]{8}[a-zA-Z0-9]{4}" defer><\/script>$/);
+    });
+
+    it("includes nonce on both tags", async () => {
+      const ob = new Obfious(CREDS);
+      const tags = await ob.scriptTags({ nonce: "xyz" });
+      const lines = tags.split("\n");
+      expect(lines[0]).toContain('nonce="xyz"');
+      expect(lines[1]).toContain('nonce="xyz"');
+    });
+
+    it("shim tag and bootstrap tag have different keys", async () => {
+      const ob = new Obfious(CREDS);
+      const tags = await ob.scriptTags();
+      const lines = tags.split("\n");
+      const shimKey = lines[0].match(/\?([0-9a-f]{10})=/)?.[1];
+      const bootKey = lines[1].match(/\?([0-9a-f]{10})=/)?.[1];
+      expect(shimKey).toBeDefined();
+      expect(bootKey).toBeDefined();
+      expect(shimKey).not.toBe(bootKey);
+    });
+  });
+
+  describe("shim — protect serving", () => {
+    it("serves shim JS on valid shim key", async () => {
+      const ob = new Obfious(CREDS);
+      const shimUrl = "https://example.com" + await ob.getShimUrl();
+      const result = await ob.protect(new Request(shimUrl));
+      expect(result.response).not.toBeNull();
+      const text = await result.response!.text();
+      expect(text).toContain("__obf_shim");
+      expect(result.response!.headers.get("Content-Type")).toBe("application/javascript");
+    });
+
+    it("shim has 24h cache", async () => {
+      const ob = new Obfious(CREDS);
+      const shimUrl = "https://example.com" + await ob.getShimUrl();
+      const result = await ob.protect(new Request(shimUrl));
+      expect(result.response!.headers.get("Cache-Control")).toBe("private, max-age=86400");
+    });
+
+    it("shim serving does not call API fetch", async () => {
+      const ob = new Obfious(CREDS);
+      const shimUrl = "https://example.com" + await ob.getShimUrl();
+      await ob.protect(new Request(shimUrl));
+      // mockFetch should NOT have been called (shim is served directly)
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("bootstrap still served on bootstrap key (not shim)", async () => {
+      const ob = new Obfious(CREDS);
+      const bootUrl = "https://example.com" + await ob.getScriptUrl();
+      mockFetch.mockResolvedValueOnce(new Response("bundle-code"));
+      const result = await ob.protect(new Request(bootUrl));
+      expect(result.response).not.toBeNull();
+      const text = await result.response!.text();
+      expect(text).toBe("bundle-code");
+      // Bootstrap fetches from API
+      expect(mockFetch).toHaveBeenCalled();
+    });
+  });
 });
