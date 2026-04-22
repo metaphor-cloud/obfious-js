@@ -94,9 +94,9 @@ export class Obfious {
   async scriptTag(opts?: { nonce?: string }): Promise<string> {
     const shimUrl = await this.getShimUrl();
     const bootstrapUrl = await this.getScriptUrl();
-    const nonceAttr = opts?.nonce ? `nonce="${opts.nonce}"` : "";
-    return `<script src="${shimUrl}" ${nonceAttr}></script>\n`
-      + `<script src="${bootstrapUrl}" async fetchpriority="low" ${nonceAttr}></script>`;
+    const nonceAttr = opts?.nonce ? ` nonce="${opts.nonce}"` : "";
+    return `<script src="${shimUrl}"${nonceAttr}></script>\n`
+      + `<script src="${bootstrapUrl}" async fetchpriority="low"${nonceAttr}></script>`;
   }
 
   /** Main entry: handle a request */

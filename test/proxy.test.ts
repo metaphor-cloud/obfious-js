@@ -86,8 +86,8 @@ describe("@obfious/js proxy", () => {
       expect(lines).toHaveLength(2);
       // Shim: no defer
       expect(lines[0]).toMatch(/^<script src="\/\?[0-9a-f]{10}=1"><\/script>$/);
-      // Bootstrap: has defer
-      expect(lines[1]).toMatch(/^<script src="\/\?[0-9a-f]{10}=[0-9a-f]{8}[a-zA-Z0-9]{4}" defer><\/script>$/);
+      // Bootstrap: async, non-blocking
+      expect(lines[1]).toMatch(/^<script src="\/\?[0-9a-f]{10}=[0-9a-f]{8}[a-zA-Z0-9]{4}" async fetchpriority="low"><\/script>$/);
     });
 
     it("includes nonce on both tags", async () => {
