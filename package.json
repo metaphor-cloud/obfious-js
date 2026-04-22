@@ -1,6 +1,6 @@
 {
   "name": "@obfious/js",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "Obfious anti-bot protection for JavaScript — CF Workers, Next.js, Express, Fastify, Lambda",
   "type": "module",
   "exports": {
