@@ -103,6 +103,10 @@ export function obfiousHandler(options: ObfiousLambdaOptions, handler: LambdaHan
       event.headers["x-obfious-device-id"] = String(result.deviceId);
     }
 
-    return handler(event, context);
+    const handlerResult = await handler(event, context);
+    if (result.resyncHeaders) {
+      handlerResult.headers = { ...handlerResult.headers, ...result.resyncHeaders };
+    }
+    return handlerResult;
   };
 }

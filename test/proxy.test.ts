@@ -267,6 +267,85 @@ describe("@obfious/js proxy", () => {
     });
   });
 
+  describe("protect — resync headers", () => {
+    async function protectedRequest(): Promise<Request> {
+      const headerName = await buildAuthHeaderName(CREDS.secret);
+      const payload = new Uint8Array(17);
+      payload[0] = 0x21;
+      payload.set([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04], 1);
+      const b64 = btoa(String.fromCharCode(...payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      return new Request("https://example.com/api/data", {
+        headers: { [headerName]: b64 + ".sig" },
+      });
+    }
+
+    it("derives resync headers when validate returns resync: true", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: true }));
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+      expect(result.deviceId).toBe("dev_abc");
+      expect(result.resyncHeaders).toBeDefined();
+      const entries = Object.entries(result.resyncHeaders!);
+      expect(entries).toHaveLength(1);
+      const [name, value] = entries[0];
+      // Header name: x-{10hex}-{8hex}{4alphanum}
+      expect(name).toMatch(/^x-[0-9a-f]{10}-[0-9a-f]{8}[a-zA-Z0-9]{4}$/);
+      // Value: 16 hex chars (HMAC tag)
+      expect(value).toMatch(/^[0-9a-f]{16}$/);
+    });
+
+    it("resync header name uses bootstrap key prefix", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: true }));
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
+      const scriptUrl = await ob.getScriptUrl();
+      const bootstrapKey = scriptUrl.split("?")[1].split("=")[0];
+      const resyncName = Object.keys(result.resyncHeaders!)[0];
+      expect(resyncName.startsWith(`x-${bootstrapKey}-`)).toBe(true);
+    });
+
+    it("no resyncHeaders when resync is absent", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc" }));
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+      expect(result.resyncHeaders).toBeUndefined();
+    });
+
+    it("no resyncHeaders when resync is explicitly false", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: false }));
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+      expect(result.resyncHeaders).toBeUndefined();
+    });
+
+    it("no resyncHeaders on API error (fail-open)", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockResolvedValue(new Response("Internal Server Error", { status: 500 }));
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+      expect(result.resyncHeaders).toBeUndefined();
+    });
+  });
+
   describe("shim — key derivation", () => {
     it("getShimUrl returns /?{10hex}=1", async () => {
       const ob = new Obfious(CREDS);

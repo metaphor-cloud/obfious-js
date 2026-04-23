@@ -56,5 +56,11 @@ export async function obfiousPlugin(fastify: any, options: ObfiousFastifyOptions
     if (result.deviceId) {
       request.obfiousDeviceId = result.deviceId;
     }
+
+    if (result.resyncHeaders) {
+      for (const [name, value] of Object.entries(result.resyncHeaders)) {
+        reply.header(name, value);
+      }
+    }
   });
 }

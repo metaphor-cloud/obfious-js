@@ -55,6 +55,12 @@ export function obfiousMiddleware(options: ObfiousExpressOptions) {
         (req as any).obfiousDeviceId = result.deviceId;
       }
 
+      if (result.resyncHeaders) {
+        for (const [name, value] of Object.entries(result.resyncHeaders)) {
+          res.setHeader(name, value);
+        }
+      }
+
       next();
     } catch (err) {
       next(err);

@@ -38,9 +38,8 @@ export function createObfiousMiddleware(config: ObfiousNextjsConfig) {
     ),
   });
 
-  return async (request: Request): Promise<Response | null> => {
-    const result = await obfious.protect(request);
-    return result.response;
+  return async (request: Request): Promise<ProtectResult> => {
+    return await obfious.protect(request);
   };
 }
 

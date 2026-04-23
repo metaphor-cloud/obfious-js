@@ -1,5 +1,5 @@
 /**
- * Obfious v2.2 — Consumer proxy.
+ * Obfious v2.3 — Consumer proxy.
  *
  * Matches Obfious POST traffic by: POST + static file extension + JSON array body.
  * Forwards to API preserving the original random path.
@@ -41,6 +41,7 @@ export interface ObfiousCreds {
 export interface ProtectResult {
   response: Response | null;
   deviceId?: string;
+  resyncHeaders?: Record<string, string>;
 }
 
 const HDR_KEY = "x-obfious-key";
@@ -75,9 +76,9 @@ export class Obfious {
   /** Get the script URL with time-rotating query param. */
   async getScriptUrl(): Promise<string> {
     if (this.config.scriptPath) return this.config.scriptPath;
-    const key = await deriveBootstrapKey(this.creds.secret);
+    const key = await deriveKey(this.creds.secret, "obfious-bootstrap-v1");
     if (!this.randomValue || this.cachedKey !== key || Date.now() - this.randomValueCreatedAt > RANDOM_VALUE_TTL) {
-      this.randomValue = await deriveBootstrapValue(this.creds.secret, key);
+      this.randomValue = await deriveObfValue(this.creds.secret, key);
       this.randomValueCreatedAt = Date.now();
       this.cachedKey = key;
     }
@@ -86,7 +87,7 @@ export class Obfious {
 
   /** Get the shim script URL with time-rotating query param. */
   async getShimUrl(): Promise<string> {
-    const key = await deriveShimKey(this.creds.secret);
+    const key = await deriveKey(this.creds.secret, "obfious-shim-v1");
     return `/?${key}=1`;
   }
 
@@ -120,7 +121,7 @@ export class Obfious {
       if (url.pathname === "/") {
         for (const [paramKey, paramValue] of url.searchParams) {
           // Shim: tiny fetch hook, served directly (no API call), cached 24h
-          if (await isValidShimKey(this.creds.secret, paramKey)) {
+          if (await isValidKey(this.creds.secret, "obfious-shim-v1", paramKey)) {
             return {
               response: new Response(SHIM_JS, {
                 headers: {
@@ -130,7 +131,7 @@ export class Obfious {
               }),
             };
           }
-          if (await isValidBootstrapKey(this.creds.secret, paramKey)) {
+          if (await isValidKey(this.creds.secret, "obfious-bootstrap-v1", paramKey)) {
             let bundle = await this.fetchBundle();
             // Inject auth header name derived from the bootstrap URL query params
             if (bundle) bundle = bundle.replace("__PATH_MANIFEST__", `x-${paramKey}-${paramValue}`);
@@ -196,7 +197,15 @@ export class Obfious {
     const result = await this.validateToken(tokenHex, payloadB64, signatureB64, encryptedUser);
     if (!result.valid) return { response: new Response(null, { status: 401 }) };
 
-    return { response: null, deviceId: result.deviceId };
+    let resyncHeaders: Record<string, string> | undefined;
+    if (result.resync) {
+      const bootstrapKey = await deriveKey(this.creds.secret, "obfious-bootstrap-v1");
+      const name = "x-" + bootstrapKey + "-" + await deriveObfValue(this.creds.secret, "resync:" + bootstrapKey);
+      const tag = (await hmacSign(this.creds.secret, "resync-tag:" + bootstrapKey)).slice(0, 16);
+      resyncHeaders = { [name]: tag };
+    }
+
+    return { response: null, deviceId: result.deviceId, resyncHeaders };
   }
 
   // --- Private ---
@@ -295,7 +304,7 @@ export class Obfious {
 
   private async validateToken(
     tokenHex: string, payloadB64: string, signatureB64: string, encryptedUser?: string,
-  ): Promise<{ valid: boolean; deviceId?: string }> {
+  ): Promise<{ valid: boolean; deviceId?: string; resync?: boolean }> {
     try {
       const body: Record<string, any> = { tokenHex, signature: signatureB64, payload: payloadB64 };
       if (encryptedUser) body.encryptedUser = encryptedUser;
@@ -312,7 +321,7 @@ export class Obfious {
       if (result.valid !== true) {
         console.error(`[obfious] Validate rejected: ${JSON.stringify(result)}`);
       }
-      return { valid: result.valid === true, deviceId: result.deviceId };
+      return { valid: result.valid === true, deviceId: result.deviceId, resync: result.resync === true };
     } catch (err) {
       console.error("[obfious] API unreachable during token validation, allowing request through:", err);
       return { valid: true };
@@ -337,42 +346,15 @@ export class Obfious {
 
 // --- Time-rotating key derivation ---
 
-async function deriveBootstrapKey(secret: string, windowOffset = 0): Promise<string> {
+async function deriveKey(secret: string, prefix: string, windowOffset = 0): Promise<string> {
   const window = Math.floor(Date.now() / 300_000) + windowOffset;
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
-  );
-  const sig = await crypto.subtle.sign(
-    "HMAC", key, new TextEncoder().encode("obfious-bootstrap-v1:" + window),
-  );
-  return hexEncode(new Uint8Array(sig)).slice(0, 10);
+  return (await hmacSign(secret, prefix + ":" + window)).slice(0, 10);
 }
 
-async function isValidBootstrapKey(secret: string, candidate: string): Promise<boolean> {
+async function isValidKey(secret: string, prefix: string, candidate: string): Promise<boolean> {
   if (candidate.length !== 10 || !/^[0-9a-f]{10}$/.test(candidate)) return false;
   for (const offset of [-1, 0, 1]) {
-    if (await deriveBootstrapKey(secret, offset) === candidate) return true;
-  }
-  return false;
-}
-
-async function deriveShimKey(secret: string, windowOffset = 0): Promise<string> {
-  const window = Math.floor(Date.now() / 300_000) + windowOffset;
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
-  );
-  const sig = await crypto.subtle.sign(
-    "HMAC", key, new TextEncoder().encode("obfious-shim-v1:" + window),
-  );
-  return hexEncode(new Uint8Array(sig)).slice(0, 10);
-}
-
-async function isValidShimKey(secret: string, candidate: string): Promise<boolean> {
-  if (candidate.length !== 10 || !/^[0-9a-f]{10}$/.test(candidate)) return false;
-  for (const offset of [-1, 0, 1]) {
-    if (await deriveShimKey(secret, offset) === candidate) return true;
+    if (await deriveKey(secret, prefix, offset) === candidate) return true;
   }
   return false;
 }
@@ -393,12 +375,7 @@ async function hmacSign(secret: string, payload: string): Promise<string> {
 }
 
 async function encryptUser(user: string, privateKey: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(privateKey),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(user));
-  return hexEncode(new Uint8Array(sig));
+  return hmacSign(privateKey, user);
 }
 
 function extractToken(payloadB64: string): string | null {
@@ -431,8 +408,8 @@ function rotHex(s: string, n: number): string {
   }).join("");
 }
 
-async function deriveBootstrapValue(secret: string, bootstrapKey: string): Promise<string> {
-  const hmac8 = (await hmacSign(secret, bootstrapKey)).slice(0, 8);
+async function deriveObfValue(secret: string, domain: string): Promise<string> {
+  const hmac8 = (await hmacSign(secret, domain)).slice(0, 8);
   const rotation = crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 0 ? 13 : 14;
   return rotHex(hmac8, rotation) + generateRandom(4);
 }
@@ -457,7 +434,7 @@ async function findAuthHeader(secret: string, request: Request): Promise<string 
 
     // Fallback: value may have been derived from an adjacent-window key
     for (const offset of [-1, 1]) {
-      const altKey = await deriveBootstrapKey(secret, offset);
+      const altKey = await deriveKey(secret, "obfious-bootstrap-v1", offset);
       const altHmac = (await hmacSign(secret, altKey)).slice(0, 8);
       if (rotHex(rotated8, 16 - 13) === altHmac) return value;
       if (rotHex(rotated8, 16 - 14) === altHmac) return value;
