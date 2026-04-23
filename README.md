@@ -33,6 +33,7 @@ const obfious = new Obfious({
 const result = await obfious.protect(request);
 if (result.response) return result.response;
 // result.deviceId is set when token is valid
+// result.botScore (0-1) indicates bot likelihood
 
 // Script tag for HTML <head>:
 const tag = await obfious.scriptTag({ nonce: "abc123" });

@@ -202,6 +202,26 @@ describe("@obfious/js proxy", () => {
       expect(result.deviceId).toBe("dev_abc");
     });
 
+    it("returns botScore when validate includes it", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", botScore: 0.42 }));
+        return new Response("", { status: 404 });
+      });
+      const headerName = await buildAuthHeaderName(CREDS.secret);
+      const payload = new Uint8Array(17);
+      payload[0] = 0x21;
+      payload.set([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04], 1);
+      const b64 = btoa(String.fromCharCode(...payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const result = await ob.protect(new Request("https://example.com/api/data", {
+        headers: { [headerName]: b64 + ".sig" },
+      }));
+      expect(result.response).toBeNull();
+      expect(result.deviceId).toBe("dev_abc");
+      expect(result.botScore).toBe(0.42);
+    });
+
     it("401 on invalid validation", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       mockFetch.mockResolvedValue(new Response(JSON.stringify({ valid: false })));
@@ -311,6 +331,19 @@ describe("@obfious/js proxy", () => {
       const bootstrapKey = scriptUrl.split("?")[1].split("=")[0];
       const resyncName = Object.keys(result.resyncHeaders!)[0];
       expect(resyncName.startsWith(`x-${bootstrapKey}-`)).toBe(true);
+    });
+
+    it("returns botScore alongside resync headers", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: true, botScore: 0.15 }));
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+      expect(result.botScore).toBe(0.15);
+      expect(result.resyncHeaders).toBeDefined();
     });
 
     it("no resyncHeaders when resync is absent", async () => {

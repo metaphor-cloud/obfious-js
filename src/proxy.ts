@@ -1,5 +1,5 @@
 /**
- * Obfious v2.3 — Consumer proxy.
+ * Obfious v2.4 — Consumer proxy.
  *
  * Matches Obfious POST traffic by: POST + static file extension + JSON array body.
  * Forwards to API preserving the original random path.
@@ -41,6 +41,7 @@ export interface ObfiousCreds {
 export interface ProtectResult {
   response: Response | null;
   deviceId?: string;
+  botScore?: number;
   resyncHeaders?: Record<string, string>;
 }
 
@@ -205,7 +206,7 @@ export class Obfious {
       resyncHeaders = { [name]: tag };
     }
 
-    return { response: null, deviceId: result.deviceId, resyncHeaders };
+    return { response: null, deviceId: result.deviceId, botScore: result.botScore, resyncHeaders };
   }
 
   // --- Private ---
@@ -304,7 +305,7 @@ export class Obfious {
 
   private async validateToken(
     tokenHex: string, payloadB64: string, signatureB64: string, encryptedUser?: string,
-  ): Promise<{ valid: boolean; deviceId?: string; resync?: boolean }> {
+  ): Promise<{ valid: boolean; deviceId?: string; resync?: boolean; botScore?: number }> {
     try {
       const body: Record<string, any> = { tokenHex, signature: signatureB64, payload: payloadB64 };
       if (encryptedUser) body.encryptedUser = encryptedUser;
@@ -321,7 +322,7 @@ export class Obfious {
       if (result.valid !== true) {
         console.error(`[obfious] Validate rejected: ${JSON.stringify(result)}`);
       }
-      return { valid: result.valid === true, deviceId: result.deviceId, resync: result.resync === true };
+      return { valid: result.valid === true, deviceId: result.deviceId, resync: result.resync === true, botScore: result.botScore };
     } catch (err) {
       console.error("[obfious] API unreachable during token validation, allowing request through:", err);
       return { valid: true };
