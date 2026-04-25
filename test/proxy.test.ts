@@ -299,54 +299,46 @@ describe("@obfious/js proxy", () => {
       });
     }
 
-    it("derives resync headers when validate returns resync: true", async () => {
+    const RESYNC_NAME = "x-abcdef0123-deadbeef1234";
+    const RESYNC_VALUE = "0123456789abcdef";
+
+    it("relays resync headers verbatim from /validate response headers", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       mockFetch.mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/validate"))
-          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: true }));
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc" }), {
+            headers: {
+              "x-obf-resync-name": RESYNC_NAME,
+              "x-obf-resync-value": RESYNC_VALUE,
+            },
+          });
         return new Response("", { status: 404 });
       });
       const result = await ob.protect(await protectedRequest());
       expect(result.response).toBeNull();
       expect(result.deviceId).toBe("dev_abc");
-      expect(result.resyncHeaders).toBeDefined();
-      const entries = Object.entries(result.resyncHeaders!);
-      expect(entries).toHaveLength(1);
-      const [name, value] = entries[0];
-      // Header name: x-{10hex}-{8hex}{4alphanum}
-      expect(name).toMatch(/^x-[0-9a-f]{10}-[0-9a-f]{8}[a-zA-Z0-9]{4}$/);
-      // Value: 16 hex chars (HMAC tag)
-      expect(value).toMatch(/^[0-9a-f]{16}$/);
-    });
-
-    it("resync header name uses bootstrap key prefix", async () => {
-      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
-      mockFetch.mockImplementation(async (url: string) => {
-        if (typeof url === "string" && url.includes("/validate"))
-          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: true }));
-        return new Response("", { status: 404 });
-      });
-      const result = await ob.protect(await protectedRequest());
-      const scriptUrl = await ob.getScriptUrl();
-      const bootstrapKey = scriptUrl.split("?")[1].split("=")[0];
-      const resyncName = Object.keys(result.resyncHeaders!)[0];
-      expect(resyncName.startsWith(`x-${bootstrapKey}-`)).toBe(true);
+      expect(result.resyncHeaders).toEqual({ [RESYNC_NAME]: RESYNC_VALUE });
     });
 
     it("returns botScore alongside resync headers", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       mockFetch.mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/validate"))
-          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: true, botScore: 0.15 }));
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", botScore: 0.15 }), {
+            headers: {
+              "x-obf-resync-name": RESYNC_NAME,
+              "x-obf-resync-value": RESYNC_VALUE,
+            },
+          });
         return new Response("", { status: 404 });
       });
       const result = await ob.protect(await protectedRequest());
       expect(result.response).toBeNull();
       expect(result.botScore).toBe(0.15);
-      expect(result.resyncHeaders).toBeDefined();
+      expect(result.resyncHeaders).toEqual({ [RESYNC_NAME]: RESYNC_VALUE });
     });
 
-    it("no resyncHeaders when resync is absent", async () => {
+    it("no resyncHeaders when response headers absent", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       mockFetch.mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/validate"))
@@ -358,11 +350,13 @@ describe("@obfious/js proxy", () => {
       expect(result.resyncHeaders).toBeUndefined();
     });
 
-    it("no resyncHeaders when resync is explicitly false", async () => {
+    it("no resyncHeaders when only one of the two response headers is set", async () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       mockFetch.mockImplementation(async (url: string) => {
         if (typeof url === "string" && url.includes("/validate"))
-          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", resync: false }));
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc" }), {
+            headers: { "x-obf-resync-name": RESYNC_NAME },
+          });
         return new Response("", { status: 404 });
       });
       const result = await ob.protect(await protectedRequest());
@@ -375,6 +369,47 @@ describe("@obfious/js proxy", () => {
       mockFetch.mockResolvedValue(new Response("Internal Server Error", { status: 500 }));
       const result = await ob.protect(await protectedRequest());
       expect(result.response).toBeNull();
+      expect(result.resyncHeaders).toBeUndefined();
+    });
+
+    it("strips CRLF from resync headers (defence against header injection)", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      // The runtime Headers API rejects CRLF at construction, so use a shimmed Response
+      // to simulate a non-conformant upstream and exercise sanitizeHeader directly.
+      const headerMap: Record<string, string> = {
+        "x-obf-resync-name": `${RESYNC_NAME}\rinjected`,
+        "x-obf-resync-value": `${RESYNC_VALUE}\nx-evil: 1`,
+      };
+      const shimmedResponse = {
+        ok: true,
+        status: 200,
+        headers: { get: (k: string) => headerMap[k.toLowerCase()] ?? null },
+        json: async () => ({ valid: true, deviceId: "dev_abc" }),
+      };
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate")) return shimmedResponse;
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
+      const [name, value] = Object.entries(result.resyncHeaders!)[0];
+      expect(name).toBe(`${RESYNC_NAME}injected`);
+      expect(value).toBe(`${RESYNC_VALUE}x-evil: 1`);
+      expect(name + value).not.toMatch(/[\r\n]/);
+    });
+
+    it("rejects oversized resync header values (length cap)", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc" }), {
+            headers: {
+              "x-obf-resync-name": RESYNC_NAME,
+              "x-obf-resync-value": "a".repeat(201),
+            },
+          });
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
       expect(result.resyncHeaders).toBeUndefined();
     });
   });

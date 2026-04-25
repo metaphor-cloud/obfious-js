@@ -198,15 +198,7 @@ export class Obfious {
     const result = await this.validateToken(tokenHex, payloadB64, signatureB64, encryptedUser);
     if (!result.valid) return { response: new Response(null, { status: 401 }) };
 
-    let resyncHeaders: Record<string, string> | undefined;
-    if (result.resync) {
-      const bootstrapKey = await deriveKey(this.creds.secret, "obfious-bootstrap-v1");
-      const name = "x-" + bootstrapKey + "-" + await deriveObfValue(this.creds.secret, "resync:" + bootstrapKey);
-      const tag = (await hmacSign(this.creds.secret, "resync-tag:" + bootstrapKey)).slice(0, 16);
-      resyncHeaders = { [name]: tag };
-    }
-
-    return { response: null, deviceId: result.deviceId, botScore: result.botScore, resyncHeaders };
+    return { response: null, deviceId: result.deviceId, botScore: result.botScore, resyncHeaders: result.resyncHeaders };
   }
 
   // --- Private ---
@@ -305,7 +297,7 @@ export class Obfious {
 
   private async validateToken(
     tokenHex: string, payloadB64: string, signatureB64: string, encryptedUser?: string,
-  ): Promise<{ valid: boolean; deviceId?: string; resync?: boolean; botScore?: number }> {
+  ): Promise<{ valid: boolean; deviceId?: string; resyncHeaders?: Record<string, string>; botScore?: number }> {
     try {
       const body: Record<string, any> = { tokenHex, signature: signatureB64, payload: payloadB64 };
       if (encryptedUser) body.encryptedUser = encryptedUser;
@@ -322,7 +314,10 @@ export class Obfious {
       if (result.valid !== true) {
         console.error(`[obfious] Validate rejected: ${JSON.stringify(result)}`);
       }
-      return { valid: result.valid === true, deviceId: result.deviceId, resync: result.resync === true, botScore: result.botScore };
+      const resyncName = sanitizeHeader(res.headers.get("x-obf-resync-name"));
+      const resyncValue = sanitizeHeader(res.headers.get("x-obf-resync-value"));
+      const resyncHeaders = (resyncName && resyncValue) ? { [resyncName]: resyncValue } : undefined;
+      return { valid: result.valid === true, deviceId: result.deviceId, resyncHeaders, botScore: result.botScore };
     } catch (err) {
       console.error("[obfious] API unreachable during token validation, allowing request through:", err);
       return { valid: true };
@@ -361,6 +356,13 @@ async function isValidKey(secret: string, prefix: string, candidate: string): Pr
 }
 
 // --- Helpers ---
+
+function sanitizeHeader(v: string | null): string | undefined {
+  if (!v) return undefined;
+  const s = v.replace(/[\r\n]/g, "");
+  if (!s || s.length > 200) return undefined;
+  return s;
+}
 
 function hexEncode(buf: Uint8Array): string {
   return Array.from(buf, b => b.toString(16).padStart(2, "0")).join("");
