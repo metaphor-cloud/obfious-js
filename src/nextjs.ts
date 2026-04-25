@@ -4,8 +4,8 @@ import type { ObfiousConfig, ObfiousCreds, ProtectResult } from "./proxy";
 export type { ObfiousConfig, ObfiousCreds, ProtectResult };
 export { Obfious };
 
-export interface ObfiousNextjsConfig extends ObfiousConfig {
-  creds?: ObfiousCreds;
+export interface ObfiousNextjsConfig extends Omit<ObfiousConfig, "keyId" | "secret"> {
+  creds: ObfiousCreds;
 }
 
 /**
@@ -30,7 +30,8 @@ export function createObfiousMiddleware(config: ObfiousNextjsConfig) {
   const { creds, ...rest } = config;
   const obfious = new Obfious({
     ...rest,
-    ...(creds ? { keyId: creds.keyId, secret: creds.secret } : {}),
+    keyId: creds.keyId,
+    secret: creds.secret,
     getClientIp: rest.getClientIp ?? ((req: Request) =>
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || req.headers.get("x-real-ip")
@@ -45,4 +46,14 @@ export function createObfiousMiddleware(config: ObfiousNextjsConfig) {
 
 export async function obfiousScriptTag(obfious: Obfious, nonce?: string): Promise<string> {
   return obfious.scriptTag({ nonce });
+}
+
+/** Apply Obfious side-effect headers (currently `resyncHeaders`) to a Next.js Response.
+ *  Express/Fastify/Lambda apply these automatically; in Next.js the caller controls the
+ *  outgoing response, so this helper bridges the gap. */
+export function applyObfiousHeaders(result: ProtectResult, response: Response): Response {
+  if (result.resyncHeaders) {
+    for (const [k, v] of Object.entries(result.resyncHeaders)) response.headers.set(k, v);
+  }
+  return response;
 }

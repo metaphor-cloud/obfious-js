@@ -96,7 +96,9 @@ export class Obfious {
   async scriptTag(opts?: { nonce?: string }): Promise<string> {
     const shimUrl = await this.getShimUrl();
     const bootstrapUrl = await this.getScriptUrl();
-    const nonceAttr = opts?.nonce ? ` nonce="${opts.nonce}"` : "";
+    // Standard CSP nonces are base64url; strip anything outside that set defensively.
+    const safeNonce = opts?.nonce?.replace(/[^A-Za-z0-9+/=_-]/g, "");
+    const nonceAttr = safeNonce ? ` nonce="${safeNonce}"` : "";
     return `<script src="${shimUrl}"${nonceAttr}></script>\n`
       + `<script src="${bootstrapUrl}" async fetchpriority="low"${nonceAttr}></script>`;
   }
@@ -133,6 +135,10 @@ export class Obfious {
             };
           }
           if (await isValidKey(this.creds.secret, "obfious-bootstrap-v1", paramKey)) {
+            // paramKey passed isValidKey; the bundle places paramValue inside a JS string
+            // literal context. Bound paramValue to the format getScriptUrl emits so a hostile
+            // URL can't inject JS via the placeholder substitution.
+            if (!/^[0-9a-f]{8}[a-zA-Z0-9]{4}$/.test(paramValue)) continue;
             let bundle = await this.fetchBundle();
             // Inject auth header name derived from the bootstrap URL query params
             if (bundle) bundle = bundle.replace("__PATH_MANIFEST__", `x-${paramKey}-${paramValue}`);
@@ -176,9 +182,9 @@ export class Obfious {
     }
 
     // --- Guard protected routes ---
-    if (this.config.excludePaths?.some(p => url.pathname.startsWith(p))) return { response: null };
+    if (this.config.excludePaths?.some(p => pathMatches(p, url.pathname))) return { response: null };
     if (this.config.includePaths) {
-      if (!this.config.includePaths.some(p => url.pathname.startsWith(p))) return { response: null };
+      if (!this.config.includePaths.some(p => pathMatches(p, url.pathname))) return { response: null };
     }
 
     const authHdr = await findAuthHeader(this.creds.secret, request);
@@ -268,7 +274,9 @@ export class Obfious {
     // Custom platform signals callback (takes precedence)
     if (this.config.getPlatformSignals) {
       for (const [k, v] of Object.entries(this.config.getPlatformSignals(request))) {
-        headers[k.replace(/[\r\n]/g, "")] = String(v).replace(/[\r\n]/g, "");
+        const key = k.replace(/[\r\n]/g, "").slice(0, 100);
+        const val = String(v).replace(/[\r\n]/g, "").slice(0, 200);
+        if (key && val) headers[key] = val;
       }
     }
 
@@ -364,6 +372,23 @@ function sanitizeHeader(v: string | null): string | undefined {
   return s;
 }
 
+/** Constant-time string comparison. WebCrypto has no timingSafeEqual, so we
+ *  XOR-accumulate to keep timing independent of where the first mismatch is. */
+function ctEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Segment-aware path-prefix match. "/api" matches "/api" and "/api/foo" but not "/apicrash".
+ *  A prefix that already ends in "/" matches any path under it. */
+function pathMatches(prefix: string, pathname: string): boolean {
+  if (!pathname.startsWith(prefix)) return false;
+  if (pathname.length === prefix.length) return true;
+  return prefix.endsWith("/") || pathname[prefix.length] === "/";
+}
+
 function hexEncode(buf: Uint8Array): string {
   return Array.from(buf, b => b.toString(16).padStart(2, "0")).join("");
 }
@@ -432,15 +457,15 @@ async function findAuthHeader(secret: string, request: Request): Promise<string 
     if (rotated8.length !== 8 || !/^[0-9a-f]{8}$/.test(rotated8)) continue;
 
     const expectedHmac = (await hmacSign(secret, keyPart)).slice(0, 8);
-    if (rotHex(rotated8, 16 - 13) === expectedHmac) return value;
-    if (rotHex(rotated8, 16 - 14) === expectedHmac) return value;
+    if (ctEqual(rotHex(rotated8, 16 - 13), expectedHmac)) return value;
+    if (ctEqual(rotHex(rotated8, 16 - 14), expectedHmac)) return value;
 
     // Fallback: value may have been derived from an adjacent-window key
     for (const offset of [-1, 1]) {
       const altKey = await deriveKey(secret, "obfious-bootstrap-v1", offset);
       const altHmac = (await hmacSign(secret, altKey)).slice(0, 8);
-      if (rotHex(rotated8, 16 - 13) === altHmac) return value;
-      if (rotHex(rotated8, 16 - 14) === altHmac) return value;
+      if (ctEqual(rotHex(rotated8, 16 - 13), altHmac)) return value;
+      if (ctEqual(rotHex(rotated8, 16 - 14), altHmac)) return value;
     }
   }
   return null;

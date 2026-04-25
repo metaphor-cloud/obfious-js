@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { build } from "esbuild";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { execSync } from "node:child_process";
+import { readFileSync, mkdirSync, writeFileSync } from "fs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 
@@ -33,92 +34,9 @@ for (const [name, opts] of Object.entries(entries)) {
   console.log(`  ${name}.js (${result.outputFiles[0].text.length} bytes)`);
 }
 
-// --- Type declarations (v2.4) ---
+// --- Type declarations (generated from source by tsc) ---
 
-writeFileSync("dist/index.d.ts", `export interface ObfiousConfig {
-    keyId: string;
-    secret: string;
-    apiUrl?: string;
-    scriptPath?: string;
-    includePaths?: string[];
-    excludePaths?: string[];
-    privateKey?: string;
-    getClientIp?: (request: Request) => string;
-    getPlatformSignals?: (request: Request) => Record<string, string>;
-    jaHeaderName?: string;
-}
-export interface ObfiousCreds {
-    keyId: string;
-    secret: string;
-}
-export interface ProtectResult {
-    response: Response | null;
-    deviceId?: string;
-    botScore?: number;
-    resyncHeaders?: Record<string, string>;
-}
-export declare class Obfious {
-    constructor(config: ObfiousConfig);
-    getScriptUrl(): Promise<string>;
-    getShimUrl(): Promise<string>;
-    scriptTag(opts?: { nonce?: string }): Promise<string>;
-    protect(request: Request, user?: string): Promise<ProtectResult>;
-}
-`);
-
-writeFileSync("dist/nextjs.d.ts", `import { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult } from "@obfious/js";
-export { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult };
-export interface ObfiousNextjsConfig extends ObfiousConfig {
-    creds?: ObfiousCreds;
-}
-export declare function createObfiousMiddleware(config: ObfiousNextjsConfig): (request: Request) => Promise<ProtectResult>;
-export declare function obfiousScriptTag(obfious: Obfious, nonce?: string): Promise<string>;
-`);
-
-writeFileSync("dist/express.d.ts", `import type { IncomingMessage, ServerResponse } from "node:http";
-import { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult } from "@obfious/js";
-export { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult };
-export interface ObfiousExpressOptions extends ObfiousConfig {
-    creds: ObfiousCreds;
-    getUser?: (req: IncomingMessage) => string | undefined;
-}
-export declare function obfiousMiddleware(options: ObfiousExpressOptions): (req: IncomingMessage, res: ServerResponse, next: (err?: any) => void) => Promise<void>;
-`);
-
-writeFileSync("dist/fastify.d.ts", `import type { IncomingMessage } from "node:http";
-import { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult } from "@obfious/js";
-export { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult };
-export interface ObfiousFastifyOptions extends ObfiousConfig {
-    creds: ObfiousCreds;
-    getUser?: (req: IncomingMessage) => string | undefined;
-}
-export declare function obfiousPlugin(fastify: any, options: ObfiousFastifyOptions): Promise<void>;
-`);
-
-writeFileSync("dist/lambda.d.ts", `import { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult } from "@obfious/js";
-export { Obfious, ObfiousConfig, ObfiousCreds, ProtectResult };
-export interface APIGatewayProxyEvent {
-    httpMethod: string;
-    path: string;
-    headers: Record<string, string | undefined>;
-    multiValueHeaders?: Record<string, string[] | undefined>;
-    queryStringParameters?: Record<string, string | undefined> | null;
-    body: string | null;
-    isBase64Encoded: boolean;
-    requestContext: { identity?: { sourceIp?: string }; [key: string]: any };
-}
-export interface APIGatewayProxyResult {
-    statusCode: number;
-    headers?: Record<string, string>;
-    body: string;
-    isBase64Encoded?: boolean;
-}
-export type LambdaHandler = (event: APIGatewayProxyEvent, context: any) => Promise<APIGatewayProxyResult>;
-export interface ObfiousLambdaOptions extends ObfiousConfig {
-    creds: ObfiousCreds;
-    getUser?: (event: APIGatewayProxyEvent) => string | undefined;
-}
-export declare function obfiousHandler(options: ObfiousLambdaOptions, handler: LambdaHandler): LambdaHandler;
-`);
+console.log("Generating type declarations...");
+execSync("npx tsc -p tsconfig.build.json", { stdio: "inherit" });
 
 console.log("@obfious/js built successfully");

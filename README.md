@@ -37,13 +37,18 @@ if (result.response) return result.response;
 
 // Script tag for HTML <head>:
 const tag = await obfious.scriptTag({ nonce: "abc123" });
-// -> <script src="/?a3f7c9d4e5=xR7kM2pQ" nonce="abc123"></script>
+// -> <script src="/?{shimKey}=1" nonce="abc123"></script>
+//    <script src="/?{bootstrapKey}={value}" async fetchpriority="low" nonce="abc123"></script>
 ```
+
+`scriptTag()` returns two tags — a synchronous fetch hook shim (~350 bytes) and the deferred bootstrap. The shim ensures requests issued during page load are queued correctly until the bootstrap activates.
+
+`result.botScore` (0–1) is set when validation succeeds; `result.resyncHeaders` carries server-side resync metadata which the integrations apply to the outgoing response automatically.
 
 ### Next.js
 
 ```typescript
-import { createObfiousMiddleware } from "@obfious/js/nextjs";
+import { createObfiousMiddleware, applyObfiousHeaders } from "@obfious/js/nextjs";
 import { NextResponse } from "next/server";
 
 const obfious = createObfiousMiddleware({
@@ -52,11 +57,14 @@ const obfious = createObfiousMiddleware({
 });
 
 export async function middleware(request: NextRequest) {
-  const response = await obfious(request);
-  if (response) return response;
-  return NextResponse.next();
+  const result = await obfious(request);
+  if (result.response) return result.response;
+  // Apply Obfious side-effect headers (e.g. resync) to the downstream response
+  return applyObfiousHeaders(result, NextResponse.next());
 }
 ```
+
+`createObfiousMiddleware` returns a function that yields a `ProtectResult` (matching the core API). Use the helper `applyObfiousHeaders` from `@obfious/js/nextjs` to forward `resyncHeaders` onto the response — Express/Fastify/Lambda integrations do this automatically.
 
 ### Express
 
@@ -108,6 +116,9 @@ export const handler = obfiousHandler({
 | `privateKey` | string | -- | HMAC key for user ID encryption |
 | `getClientIp` | callback | (auto) | Custom client IP extraction |
 | `getPlatformSignals` | callback | (CF default) | Custom platform signal headers |
+| `jaHeaderName` | string | `x-cf-ja4` | Header to read JA4 TLS fingerprint from when not behind Cloudflare |
+
+`ProtectResult` includes `deviceId`, `botScore`, and `resyncHeaders`. The Express/Fastify/Lambda integrations apply `resyncHeaders` to the outgoing response automatically; in Next.js, use `applyObfiousHeaders` (see above).
 
 ## CSP requirements
 

@@ -6,13 +6,13 @@ import { toWebRequest } from "./node-adapter";
 export type { ObfiousConfig, ObfiousCreds, ProtectResult };
 export { Obfious };
 
-export interface ObfiousFastifyOptions extends ObfiousConfig {
+export interface ObfiousFastifyOptions extends Omit<ObfiousConfig, "keyId" | "secret"> {
   creds: ObfiousCreds;
   getUser?: (req: IncomingMessage) => string | undefined;
 }
 
 /**
- * Fastify plugin for Obfious v2.1.
+ * Fastify plugin for Obfious.
  *
  * ```ts
  * import Fastify from "fastify";

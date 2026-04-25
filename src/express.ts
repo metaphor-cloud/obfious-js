@@ -6,13 +6,13 @@ import { toWebRequest, writeWebResponse } from "./node-adapter";
 export type { ObfiousConfig, ObfiousCreds, ProtectResult };
 export { Obfious };
 
-export interface ObfiousExpressOptions extends ObfiousConfig {
+export interface ObfiousExpressOptions extends Omit<ObfiousConfig, "keyId" | "secret"> {
   creds: ObfiousCreds;
   getUser?: (req: IncomingMessage) => string | undefined;
 }
 
 /**
- * Express/Connect middleware for Obfious v2.1.
+ * Express/Connect middleware for Obfious.
  *
  * ```ts
  * import express from "express";

@@ -54,13 +54,13 @@ async function responseToResult(response: Response): Promise<APIGatewayProxyResu
   return { statusCode: response.status, headers, body: await response.text() };
 }
 
-export interface ObfiousLambdaOptions extends ObfiousConfig {
+export interface ObfiousLambdaOptions extends Omit<ObfiousConfig, "keyId" | "secret"> {
   creds: ObfiousCreds;
   getUser?: (event: APIGatewayProxyEvent) => string | undefined;
 }
 
 /**
- * Wrap a Lambda handler with Obfious v2.1 protection.
+ * Wrap a Lambda handler with Obfious protection.
  *
  * ```ts
  * import { obfiousHandler } from "@obfious/js/lambda-v2";

@@ -130,6 +130,30 @@ describe("@obfious/js proxy", () => {
       expect((await ob.protect(new Request("https://example.com/?page=2"))).response).toBeNull();
     });
 
+    it("includePaths uses segment-aware matching: /api matches /api/foo but not /apicrash", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api"] });
+      // /apicrash is not a path under /api — should pass through unprotected
+      expect((await ob.protect(new Request("https://example.com/apicrash"))).response).toBeNull();
+      // /api/foo IS under /api — gets guarded (no auth header → 401)
+      const result = await ob.protect(new Request("https://example.com/api/foo"));
+      expect(result.response?.status).toBe(401);
+    });
+
+    it("includePaths /api/ (trailing slash) still matches /api/foo", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      const result = await ob.protect(new Request("https://example.com/api/foo"));
+      expect(result.response?.status).toBe(401);
+    });
+
+    it("excludePaths uses segment-aware matching", async () => {
+      const ob = new Obfious({ ...CREDS, excludePaths: ["/health"] });
+      // /healthcheck is not under /health
+      expect((await ob.protect(new Request("https://example.com/healthcheck"))).response?.status).toBe(401);
+      // /health and /health/sub are excluded
+      expect((await ob.protect(new Request("https://example.com/health"))).response).toBeNull();
+      expect((await ob.protect(new Request("https://example.com/health/sub"))).response).toBeNull();
+    });
+
     it("substitutes __PATH_MANIFEST__ with derived auth header name", async () => {
       const ob = new Obfious(CREDS);
       const scriptUrl = await ob.getScriptUrl();
@@ -138,6 +162,20 @@ describe("@obfious/js proxy", () => {
       mockFetch.mockResolvedValueOnce(new Response("var X='__PATH_MANIFEST__';"));
       const result = await ob.protect(new Request("https://example.com" + scriptUrl));
       expect(await result.response!.text()).toBe(`var X='x-${k}-${v}';`);
+    });
+
+    it("rejects malformed paramValue even with a valid bootstrap key", async () => {
+      // includePaths so root falls through to non-protected pass-through after the bundle check
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      const scriptUrl = await ob.getScriptUrl();
+      const [, qs] = scriptUrl.split("?");
+      const validKey = qs.split("=")[0];
+      // paramValue contains a `"` — would break out of the bundle's JS string literal
+      const evilUrl = `https://example.com/?${validKey}=evil%22+alert(1)+%22`;
+      const result = await ob.protect(new Request(evilUrl));
+      // Bundle MUST NOT be served — fetchBundle never called
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result.response).toBeNull();
     });
   });
 
