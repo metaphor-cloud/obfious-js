@@ -129,7 +129,18 @@ describe("@obfious/js proxy", () => {
       const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
       expect((await ob.protect(new Request("https://example.com/?page=2"))).response).toBeNull();
     });
+
+    it("substitutes __PATH_MANIFEST__ with derived auth header name", async () => {
+      const ob = new Obfious(CREDS);
+      const scriptUrl = await ob.getScriptUrl();
+      const [, qs] = scriptUrl.split("?");
+      const [k, v] = qs.split("=");
+      mockFetch.mockResolvedValueOnce(new Response("var X='__PATH_MANIFEST__';"));
+      const result = await ob.protect(new Request("https://example.com" + scriptUrl));
+      expect(await result.response!.text()).toBe(`var X='x-${k}-${v}';`);
+    });
   });
+
 
   describe("protect — POST matching", () => {
     it("forwards POST + static ext + JSON array", async () => {
