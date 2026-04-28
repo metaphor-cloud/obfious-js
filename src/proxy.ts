@@ -1,5 +1,5 @@
 /**
- * Obfious v2.4 — Consumer proxy.
+ * Obfious v2.6 - Consumer proxy.
  *
  * Matches Obfious POST traffic by: POST + static file extension + JSON array body.
  * Forwards to API preserving the original random path.
@@ -15,9 +15,10 @@ export interface ObfiousConfig {
   apiUrl?: string;
   /** Override script URL instead of using time-rotating derivation */
   scriptPath?: string;
-  /** Paths to protect (default: all) */
+  /** Paths to protect (default: all). Entries may be plain prefixes ("/api/")
+   *  or method-qualified ("POST:/api/checkout"). See parsePathShorthand. */
   includePaths?: string[];
-  /** Paths to exclude from protection */
+  /** Paths to exclude from protection. Same shorthand as includePaths. */
   excludePaths?: string[];
   /** Extract client IP */
   getClientIp?: (request: Request) => string;
@@ -183,9 +184,9 @@ export class Obfious {
     }
 
     // --- Guard protected routes ---
-    if (this.config.excludePaths?.some(p => pathMatches(p, url.pathname))) return { response: null };
+    if (this.config.excludePaths?.some(p => entryMatches(p, request.method, url.pathname))) return { response: null };
     if (this.config.includePaths) {
-      if (!this.config.includePaths.some(p => pathMatches(p, url.pathname))) return { response: null };
+      if (!this.config.includePaths.some(p => entryMatches(p, request.method, url.pathname))) return { response: null };
     }
 
     const authHdr = await findAuthHeader(this.creds.secret, request);
@@ -411,6 +412,28 @@ function pathMatches(prefix: string, pathname: string): boolean {
   if (!pathname.startsWith(prefix)) return false;
   if (pathname.length === prefix.length) return true;
   return prefix.endsWith("/") || pathname[prefix.length] === "/";
+}
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+/** Parse "METHOD:/path" shorthand into { path, method? }.
+ *  - The colon must appear within the first 8 characters (longest method "OPTIONS" is 7).
+ *  - The prefix must be a known HTTP method (case-insensitive, normalized to uppercase).
+ *  - Anything else (no colon, colon past char 8, unknown method) is returned as a plain
+ *    path with no method, so e.g. "foo:/bar" matches the literal path "foo:/bar". */
+export function parsePathShorthand(input: string): { path: string; method?: string } {
+  const colonIdx = input.indexOf(":");
+  if (colonIdx <= 0 || colonIdx >= 8) return { path: input };
+  const candidate = input.slice(0, colonIdx).toUpperCase();
+  if (!HTTP_METHODS.has(candidate)) return { path: input };
+  return { path: input.slice(colonIdx + 1), method: candidate };
+}
+
+/** Match a single include/exclude entry against a request method + pathname. */
+function entryMatches(entry: string, requestMethod: string, pathname: string): boolean {
+  const { path, method } = parsePathShorthand(entry);
+  if (method && method !== requestMethod.toUpperCase()) return false;
+  return pathMatches(path, pathname);
 }
 
 function hexEncode(buf: Uint8Array): string {

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Obfious } from "../src/proxy";
+import { Obfious, parsePathShorthand } from "../src/proxy";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -537,6 +537,102 @@ describe("@obfious/js proxy", () => {
       expect(text).toBe("bundle-code");
       // Bootstrap fetches from API
       expect(mockFetch).toHaveBeenCalled();
+    });
+  });
+
+  describe("parsePathShorthand", () => {
+    it("plain prefix returns path with no method", () => {
+      expect(parsePathShorthand("/api/")).toEqual({ path: "/api/" });
+    });
+
+    it("recognises known HTTP methods (case-insensitive, normalised to upper)", () => {
+      expect(parsePathShorthand("post:/api/checkout")).toEqual({ path: "/api/checkout", method: "POST" });
+      expect(parsePathShorthand("GET:/health")).toEqual({ path: "/health", method: "GET" });
+      expect(parsePathShorthand("Patch:/items")).toEqual({ path: "/items", method: "PATCH" });
+      expect(parsePathShorthand("OPTIONS:/x")).toEqual({ path: "/x", method: "OPTIONS" });
+    });
+
+    it("unknown method prefix is treated as literal path", () => {
+      expect(parsePathShorthand("foo:/bar")).toEqual({ path: "foo:/bar" });
+      expect(parsePathShorthand("CONNECT:/x")).toEqual({ path: "CONNECT:/x" });
+    });
+
+    it("colon beyond char 8 is treated as literal path", () => {
+      // Colon at index 8 (just past the 0-7 window)
+      expect(parsePathShorthand("/api/foo:bar")).toEqual({ path: "/api/foo:bar" });
+    });
+
+    it("colon at exactly char 8 is treated as literal", () => {
+      // colonIdx must be < 8, so index 8 is out of range
+      expect(parsePathShorthand("ABCDEFGH:/x")).toEqual({ path: "ABCDEFGH:/x" });
+    });
+
+    it("leading colon is treated as literal (no method prefix)", () => {
+      expect(parsePathShorthand(":/x")).toEqual({ path: ":/x" });
+    });
+  });
+
+  describe("method-qualified include/exclude paths", () => {
+    it("plain prefix matches any method", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      // GET hits guard
+      expect((await ob.protect(new Request("https://example.com/api/foo"))).response?.status).toBe(401);
+      // POST hits guard too (no static ext, so falls through to guard)
+      expect((await ob.protect(new Request("https://example.com/api/foo", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: '{"x":1}',
+      }))).response?.status).toBe(401);
+    });
+
+    it("method-qualified entry matches only when method AND path match", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["POST:/api/checkout"] });
+      // POST /api/checkout: guarded → 401 with no auth header
+      const post = await ob.protect(new Request("https://example.com/api/checkout", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: '{"x":1}',
+      }));
+      expect(post.response?.status).toBe(401);
+      // GET /api/checkout: wrong method → not in include list → pass through
+      const get = await ob.protect(new Request("https://example.com/api/checkout"));
+      expect(get.response).toBeNull();
+    });
+
+    it("method-qualified miss with wrong path falls through", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["POST:/api/checkout"] });
+      const result = await ob.protect(new Request("https://example.com/other", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: '{"x":1}',
+      }));
+      expect(result.response).toBeNull();
+    });
+
+    it("invalid method prefix is treated as literal path (no match)", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["foo:/bar"] });
+      // Real path "/bar" with GET should NOT be guarded, since the entry literally
+      // means the path "foo:/bar" which won't appear in any URL pathname
+      const result = await ob.protect(new Request("https://example.com/bar"));
+      expect(result.response).toBeNull();
+    });
+
+    it("colon beyond char 8 is treated as literal path", async () => {
+      // "/api/foo:bar" has colon at index 8 (just past the window), literal path entry
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/foo:bar"] });
+      // A request to /api/foo (no colon) should not match the literal entry
+      expect((await ob.protect(new Request("https://example.com/api/foo"))).response).toBeNull();
+      // A request to /api/foo:bar matches as a literal prefix → guarded
+      expect((await ob.protect(new Request("https://example.com/api/foo:bar"))).response?.status).toBe(401);
+    });
+
+    it("excludePaths supports method-qualified entries", async () => {
+      const ob = new Obfious({
+        ...CREDS,
+        includePaths: ["/api/"],
+        excludePaths: ["GET:/api/health"],
+      });
+      // GET /api/health is excluded → pass through
+      expect((await ob.protect(new Request("https://example.com/api/health"))).response).toBeNull();
+      // POST /api/health: not excluded (wrong method) → falls into includes, guarded
+      const post = await ob.protect(new Request("https://example.com/api/health", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: '{"x":1}',
+      }));
+      expect(post.response?.status).toBe(401);
     });
   });
 
