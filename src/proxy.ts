@@ -41,6 +41,7 @@ export interface ObfiousCreds {
 export interface ProtectResult {
   response: Response | null;
   deviceId?: string;
+  networkId?: string;
   botScore?: number;
   resyncHeaders?: Record<string, string>;
 }
@@ -201,10 +202,11 @@ export class Obfious {
     const encryptedUser = (user && this.config.privateKey)
       ? await encryptUser(user, this.config.privateKey) : undefined;
 
-    const result = await this.validateToken(tokenHex, payloadB64, signatureB64, encryptedUser);
+    const netHeaders = this.buildNetHeaders(request, this.getIp(request));
+    const result = await this.validateToken(tokenHex, payloadB64, signatureB64, encryptedUser, netHeaders);
     if (!result.valid) return { response: new Response(null, { status: 401 }) };
 
-    return { response: null, deviceId: result.deviceId, botScore: result.botScore, resyncHeaders: result.resyncHeaders };
+    return { response: null, deviceId: result.deviceId, networkId: result.networkId, botScore: result.botScore, resyncHeaders: result.resyncHeaders };
   }
 
   // --- Private ---
@@ -242,6 +244,23 @@ export class Obfious {
     return ja4 || undefined;
   }
 
+  private buildNetHeaders(request: Request, clientIp: string): Record<string, string> {
+    const headers: Record<string, string> = {};
+    const cf = (request as any).cf;
+    const asn = cf?.asn?.toString();
+    const country = cf?.country;
+    if (asn && typeof asn === "string") headers["x-obfious-net-asn"] = asn;
+    if (country && typeof country === "string") headers["x-obfious-net-country"] = country;
+    const octets = clientIp.split(".");
+    if (octets.length === 4) {
+      const bytes = [parseInt(octets[0], 10), parseInt(octets[1], 10), parseInt(octets[2], 10), 0];
+      if (!bytes.some(b => isNaN(b) || b < 0 || b > 255)) {
+        headers["x-obfious-net-ip24"] = btoa(String.fromCharCode(...bytes));
+      }
+    }
+    return headers;
+  }
+
   private lastFetchError = "";
 
   private async fetchBundle(): Promise<string | null> {
@@ -266,12 +285,13 @@ export class Obfious {
   private async forwardToApi(
     request: Request, originalPath: string, body: Uint8Array,
   ): Promise<Response> {
+    const clientIp = this.getIp(request);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "x-obfious-ip": this.getIp(request),
+      "x-obfious-ip": clientIp,
     };
 
-    // Custom platform signals callback (takes precedence)
+    // Custom platform signals (e.g. JA4 from a reverse proxy header)
     if (this.config.getPlatformSignals) {
       for (const [k, v] of Object.entries(this.config.getPlatformSignals(request))) {
         const key = k.replace(/[\r\n]/g, "").slice(0, 100);
@@ -286,6 +306,9 @@ export class Obfious {
       const ja4 = this.extractJA4(request);
       if (ja4) headers["x-cf-ja4"] = ja4;
     }
+
+    // Network fingerprinting headers (always set by the proxy, not overridable via getPlatformSignals)
+    Object.assign(headers, this.buildNetHeaders(request, clientIp));
     try {
       const res = await this.authedFetch(originalPath, {
         method: "POST",
@@ -304,14 +327,15 @@ export class Obfious {
   }
 
   private async validateToken(
-    tokenHex: string, payloadB64: string, signatureB64: string, encryptedUser?: string,
-  ): Promise<{ valid: boolean; deviceId?: string; resyncHeaders?: Record<string, string>; botScore?: number }> {
+    tokenHex: string, payloadB64: string, signatureB64: string,
+    encryptedUser?: string, netHeaders?: Record<string, string>,
+  ): Promise<{ valid: boolean; deviceId?: string; networkId?: string; resyncHeaders?: Record<string, string>; botScore?: number }> {
     try {
       const body: Record<string, any> = { tokenHex, signature: signatureB64, payload: payloadB64 };
       if (encryptedUser) body.encryptedUser = encryptedUser;
       const res = await this.authedFetch("/validate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...netHeaders },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
@@ -325,7 +349,7 @@ export class Obfious {
       const resyncName = sanitizeHeader(res.headers.get("x-obf-resync-name"));
       const resyncValue = sanitizeHeader(res.headers.get("x-obf-resync-value"));
       const resyncHeaders = (resyncName && resyncValue) ? { [resyncName]: resyncValue } : undefined;
-      return { valid: result.valid === true, deviceId: result.deviceId, resyncHeaders, botScore: result.botScore };
+      return { valid: result.valid === true, deviceId: result.deviceId, networkId: result.networkId, resyncHeaders, botScore: result.botScore };
     } catch (err) {
       console.error("[obfious] API unreachable during token validation, allowing request through:", err);
       return { valid: true };

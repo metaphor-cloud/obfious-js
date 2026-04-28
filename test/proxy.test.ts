@@ -539,4 +539,128 @@ describe("@obfious/js proxy", () => {
       expect(mockFetch).toHaveBeenCalled();
     });
   });
+
+  describe("network fingerprinting headers", () => {
+    async function protectedRequest(ip?: string): Promise<Request> {
+      const headerName = await buildAuthHeaderName(CREDS.secret);
+      const payload = new Uint8Array(17);
+      payload[0] = 0x21;
+      payload.set([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04], 1);
+      const b64 = btoa(String.fromCharCode(...payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const headers: Record<string, string> = { [headerName]: b64 + ".sig" };
+      if (ip) headers["CF-Connecting-IP"] = ip;
+      return new Request("https://example.com/api/data", { headers });
+    }
+
+    it("sends net headers on protocol POST from cf object and IPv4 IP", async () => {
+      const ob = new Obfious(CREDS);
+      let outboundHeaders: Headers | undefined;
+      mockFetch.mockImplementation(async (_url: string, init: RequestInit) => {
+        outboundHeaders = init.headers as Headers;
+        return new Response("[]");
+      });
+      const req = new Request("https://example.com/static/config.json", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.42" },
+        body: '["test"]',
+      });
+      (req as any).cf = { asn: 15169, country: "US" };
+      await ob.protect(req);
+      expect(outboundHeaders!.get("x-obfious-net-asn")).toBe("15169");
+      expect(outboundHeaders!.get("x-obfious-net-country")).toBe("US");
+      expect(outboundHeaders!.get("x-obfious-net-ip24")).toBe(btoa(String.fromCharCode(203, 0, 113, 0)));
+    });
+
+    it("omits x-obfious-net-ip24 for IPv6 and still sends ASN + country", async () => {
+      const ob = new Obfious(CREDS);
+      let outboundHeaders: Headers | undefined;
+      mockFetch.mockImplementation(async (_url: string, init: RequestInit) => {
+        outboundHeaders = init.headers as Headers;
+        return new Response("[]");
+      });
+      const req = new Request("https://example.com/static/config.json", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "2001:db8::1" },
+        body: '["test"]',
+      });
+      (req as any).cf = { asn: 15169, country: "US" };
+      await ob.protect(req);
+      expect(outboundHeaders!.get("x-obfious-net-ip24")).toBeNull();
+      expect(outboundHeaders!.get("x-obfious-net-asn")).toBe("15169");
+      expect(outboundHeaders!.get("x-obfious-net-country")).toBe("US");
+    });
+
+    it("sends net headers on /validate call", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      let validateHeaders: Headers | undefined;
+      mockFetch.mockImplementation(async (url: string, init: RequestInit) => {
+        if (typeof url === "string" && url.includes("/validate")) {
+          validateHeaders = init.headers as Headers;
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc" }));
+        }
+        return new Response("", { status: 404 });
+      });
+      const req = await protectedRequest("203.0.113.42");
+      (req as any).cf = { asn: 15169, country: "US" };
+      await ob.protect(req);
+      expect(validateHeaders!.get("x-obfious-net-asn")).toBe("15169");
+      expect(validateHeaders!.get("x-obfious-net-country")).toBe("US");
+      expect(validateHeaders!.get("x-obfious-net-ip24")).toBe(btoa(String.fromCharCode(203, 0, 113, 0)));
+    });
+
+    it("omits ASN and country when no cf object is present, still sends ip24 for IPv4", async () => {
+      const ob = new Obfious(CREDS);
+      let outboundHeaders: Headers | undefined;
+      mockFetch.mockImplementation(async (_url: string, init: RequestInit) => {
+        outboundHeaders = init.headers as Headers;
+        return new Response("[]");
+      });
+      const req = new Request("https://example.com/static/config.json", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.42" },
+        body: '["test"]',
+      });
+      await ob.protect(req);
+      expect(outboundHeaders!.get("x-obfious-net-asn")).toBeNull();
+      expect(outboundHeaders!.get("x-obfious-net-country")).toBeNull();
+      expect(outboundHeaders!.get("x-obfious-net-ip24")).toBe(btoa(String.fromCharCode(203, 0, 113, 0)));
+    });
+
+    it("omits x-obfious-net-ip24 for IPv4-mapped IPv6 addresses", async () => {
+      const ob = new Obfious(CREDS);
+      let outboundHeaders: Headers | undefined;
+      mockFetch.mockImplementation(async (_url: string, init: RequestInit) => {
+        outboundHeaders = init.headers as Headers;
+        return new Response("[]");
+      });
+      const req = new Request("https://example.com/static/config.json", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "::ffff:203.0.113.42" },
+        body: '["test"]',
+      });
+      await ob.protect(req);
+      expect(outboundHeaders!.get("x-obfious-net-ip24")).toBeNull();
+    });
+
+    it("returns 401 for NETWORK_BLOCKED validate response", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockResolvedValue(
+        new Response(JSON.stringify({ valid: false, reason: "NETWORK_BLOCKED" })),
+      );
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response!.status).toBe(401);
+    });
+
+    it("surfaces networkId from validate response", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      mockFetch.mockImplementation(async (url: string) => {
+        if (typeof url === "string" && url.includes("/validate"))
+          return new Response(JSON.stringify({ valid: true, deviceId: "dev_abc", networkId: "net_abc123" }));
+        return new Response("", { status: 404 });
+      });
+      const result = await ob.protect(await protectedRequest());
+      expect(result.response).toBeNull();
+      expect(result.networkId).toBe("net_abc123");
+    });
+  });
 });

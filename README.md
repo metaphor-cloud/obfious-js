@@ -33,6 +33,7 @@ const obfious = new Obfious({
 const result = await obfious.protect(request);
 if (result.response) return result.response;
 // result.deviceId is set when token is valid
+// result.networkId is set when network headers were forwarded
 // result.botScore (0-1) indicates bot likelihood
 
 // Script tag for HTML <head>:
@@ -118,7 +119,9 @@ export const handler = obfiousHandler({
 | `getPlatformSignals` | callback | (CF default) | Custom platform signal headers |
 | `jaHeaderName` | string | `x-cf-ja4` | Header to read JA4 TLS fingerprint from when not behind Cloudflare |
 
-`ProtectResult` includes `deviceId`, `botScore`, and `resyncHeaders`. The Express/Fastify/Lambda integrations apply `resyncHeaders` to the outgoing response automatically; in Next.js, use `applyObfiousHeaders` (see above).
+`ProtectResult` includes `deviceId`, `networkId`, `botScore`, and `resyncHeaders`. `networkId` is populated when the API returns a network identity (requires Cloudflare Workers or a platform that supplies ASN/country via `request.cf`). The Express/Fastify/Lambda integrations apply `resyncHeaders` to the outgoing response automatically; in Next.js, use `applyObfiousHeaders` (see above).
+
+Express and Fastify expose these as `req.obfiousDeviceId`, `req.obfiousNetworkId`, and `req.obfiousBotScore`. Lambda injects `x-obfious-device-id`, `x-obfious-network-id`, and `x-obfious-bot-score` into the event headers.
 
 ## CSP requirements
 

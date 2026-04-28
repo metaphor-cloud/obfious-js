@@ -102,6 +102,9 @@ export function obfiousHandler(options: ObfiousLambdaOptions, handler: LambdaHan
     if (result.deviceId) {
       event.headers["x-obfious-device-id"] = String(result.deviceId);
     }
+    if (result.networkId) {
+      event.headers["x-obfious-network-id"] = String(result.networkId);
+    }
     if (result.botScore !== undefined) {
       event.headers["x-obfious-bot-score"] = String(result.botScore);
     }

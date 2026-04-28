@@ -56,6 +56,9 @@ export async function obfiousPlugin(fastify: any, options: ObfiousFastifyOptions
     if (result.deviceId) {
       request.obfiousDeviceId = result.deviceId;
     }
+    if (result.networkId) {
+      request.obfiousNetworkId = result.networkId;
+    }
     if (result.botScore !== undefined) {
       request.obfiousBotScore = result.botScore;
     }

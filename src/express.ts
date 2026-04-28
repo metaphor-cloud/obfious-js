@@ -54,6 +54,9 @@ export function obfiousMiddleware(options: ObfiousExpressOptions) {
       if (result.deviceId) {
         (req as any).obfiousDeviceId = result.deviceId;
       }
+      if (result.networkId) {
+        (req as any).obfiousNetworkId = result.networkId;
+      }
       if (result.botScore !== undefined) {
         (req as any).obfiousBotScore = result.botScore;
       }
