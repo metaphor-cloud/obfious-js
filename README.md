@@ -30,7 +30,7 @@ const obfious = new Obfious({
 });
 
 // In your request handler:
-const result = await obfious.protect(request);
+const result = await obfious.protect(request, userId);  // userId is optional
 if (result.response) return result.response;
 // result.deviceId is set when token is valid
 // result.networkId is set when network headers were forwarded
@@ -114,7 +114,7 @@ export const handler = obfiousHandler({
 | `scriptPath` | string | (time-rotating) | Override the auto-derived script URL |
 | `includePaths` | string[] | (all) | Only guard these path prefixes (supports `"METHOD:/path"` shorthand) |
 | `excludePaths` | string[] | (none) | Always pass through these prefixes (supports `"METHOD:/path"` shorthand) |
-| `privateKey` | string | -- | HMAC key for user ID encryption |
+| `privateKey` | string | -- | HMAC key for user ID encryption. When set, the optional `user` argument passed to `protect()` is HMAC-signed before being sent to the API for device-to-user association. An integrity MAC is also computed so the server can verify the tag came from a legitimate proxy. |
 | `getClientIp` | callback | (auto) | Custom client IP extraction |
 | `getPlatformSignals` | callback | (CF default) | Custom platform signal headers |
 | `jaHeaderName` | string | `x-cf-ja4` | Header to read JA4 TLS fingerprint from when not behind Cloudflare |
@@ -158,9 +158,20 @@ If you only have `default-src 'self'` with **no** explicit `script-src`, WASM co
 
 `worker-src` similarly falls back to `script-src` then `default-src`; only set it explicitly if your policy requires it.
 
+## User association
+
+Pass an authenticated user ID to `protect()` to associate the device with the user:
+
+```typescript
+// After your own auth middleware has set req.user:
+const result = await obfious.protect(request, req.user?.id);
+```
+
+Requires `privateKey` to be set in the config. When present, the user ID is HMAC-signed with `privateKey` before being forwarded; the raw ID is never sent to the Obfious API. An integrity MAC (`HMAC-SHA256(secret, tokenHex + "." + encryptedUser)`) is included so the server can verify the tag was produced by a legitimate proxy. User association is silently skipped when `privateKey` is absent or `user` is not provided.
+
 ## Protocol version
 
-This package implements the Obfious consumer protocol v2.6. The authoritative spec lives at `docs/consumer-protocol.md` (with version history in `docs/consumer-protocol-changelog.md`) in the main `obfious` repository.
+This package implements the Obfious consumer protocol v2.7. The authoritative spec lives at `docs/consumer-protocol.md` (with version history in `docs/consumer-protocol-changelog.md`) in the main `obfious` repository.
 
 ## License
 

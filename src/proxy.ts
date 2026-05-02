@@ -1,5 +1,5 @@
 /**
- * Obfious v2.6 - Consumer proxy.
+ * Obfious v2.7 - Consumer proxy.
  *
  * Matches Obfious POST traffic by: POST + static file extension + JSON array body.
  * Forwards to API preserving the original random path.
