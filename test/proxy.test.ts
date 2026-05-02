@@ -636,6 +636,93 @@ describe("@obfious/js proxy", () => {
     });
   });
 
+  describe("encryptedUserMac — v2.7.0", () => {
+    async function hmacHex(secret: string, data: string): Promise<string> {
+      const key = await crypto.subtle.importKey(
+        "raw", new TextEncoder().encode(secret),
+        { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+      );
+      const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+      return Array.from(new Uint8Array(sig), b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    async function protectedRequest(ip?: string): Promise<Request> {
+      const headerName = await buildAuthHeaderName(CREDS.secret);
+      const payload = new Uint8Array(17);
+      payload[0] = 0x21;
+      payload.set([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04], 1);
+      const b64 = btoa(String.fromCharCode(...payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const headers: Record<string, string> = { [headerName]: b64 + ".sig" };
+      if (ip) headers["CF-Connecting-IP"] = ip;
+      return new Request("https://example.com/api/data", { headers });
+    }
+
+    const TOKEN_HEX = "deadbeef01020304";
+    const PRIVATE_KEY = "pk-test-secret";
+
+    it("sends encryptedUserMac when user and privateKey are set", async () => {
+      const ob = new Obfious({ ...CREDS, privateKey: PRIVATE_KEY, includePaths: ["/api/"] });
+      let capturedBody: any;
+      mockFetch.mockImplementation(async (url: string, init: RequestInit) => {
+        if (typeof url === "string" && url.includes("/validate")) {
+          capturedBody = JSON.parse(init.body as string);
+          return new Response(JSON.stringify({ valid: true }));
+        }
+        return new Response("", { status: 404 });
+      });
+      await ob.protect(await protectedRequest(), "user123");
+      expect(capturedBody.encryptedUser).toBeDefined();
+      expect(capturedBody.encryptedUserMac).toBeDefined();
+    });
+
+    it("encryptedUserMac is HMAC-SHA256(secret, tokenHex + '.' + encryptedUser)", async () => {
+      const ob = new Obfious({ ...CREDS, privateKey: PRIVATE_KEY, includePaths: ["/api/"] });
+      let capturedBody: any;
+      mockFetch.mockImplementation(async (url: string, init: RequestInit) => {
+        if (typeof url === "string" && url.includes("/validate")) {
+          capturedBody = JSON.parse(init.body as string);
+          return new Response(JSON.stringify({ valid: true }));
+        }
+        return new Response("", { status: 404 });
+      });
+      await ob.protect(await protectedRequest(), "user123");
+      const expectedEncryptedUser = await hmacHex(PRIVATE_KEY, "user123");
+      const expectedMac = await hmacHex(CREDS.secret, `${TOKEN_HEX}.${expectedEncryptedUser}`);
+      expect(capturedBody.encryptedUser).toBe(expectedEncryptedUser);
+      expect(capturedBody.encryptedUserMac).toBe(expectedMac);
+    });
+
+    it("does not send encryptedUserMac when no user is provided", async () => {
+      const ob = new Obfious({ ...CREDS, privateKey: PRIVATE_KEY, includePaths: ["/api/"] });
+      let capturedBody: any;
+      mockFetch.mockImplementation(async (url: string, init: RequestInit) => {
+        if (typeof url === "string" && url.includes("/validate")) {
+          capturedBody = JSON.parse(init.body as string);
+          return new Response(JSON.stringify({ valid: true }));
+        }
+        return new Response("", { status: 404 });
+      });
+      await ob.protect(await protectedRequest());
+      expect(capturedBody.encryptedUser).toBeUndefined();
+      expect(capturedBody.encryptedUserMac).toBeUndefined();
+    });
+
+    it("does not send encryptedUserMac when user is provided but privateKey is not set", async () => {
+      const ob = new Obfious({ ...CREDS, includePaths: ["/api/"] });
+      let capturedBody: any;
+      mockFetch.mockImplementation(async (url: string, init: RequestInit) => {
+        if (typeof url === "string" && url.includes("/validate")) {
+          capturedBody = JSON.parse(init.body as string);
+          return new Response(JSON.stringify({ valid: true }));
+        }
+        return new Response("", { status: 404 });
+      });
+      await ob.protect(await protectedRequest(), "user123");
+      expect(capturedBody.encryptedUser).toBeUndefined();
+      expect(capturedBody.encryptedUserMac).toBeUndefined();
+    });
+  });
+
   describe("network fingerprinting headers", () => {
     async function protectedRequest(ip?: string): Promise<Request> {
       const headerName = await buildAuthHeaderName(CREDS.secret);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 - Obfious Protocol v2.7
+
+- When `protect()` is called with a `user` argument and `privateKey` is set, the validate
+  request now includes an `encryptedUserMac` field alongside `encryptedUser`. The MAC is
+  `HMAC-SHA256(secret, tokenHex + "." + encryptedUser)` and lets the server verify the tag
+  was produced by a legitimate proxy before inserting it. Backward compatible: the server
+  accepts requests without the MAC (existing deployments require no changes).
+
 ## 0.3.0 - Obfious Protocol v2.6
 
 - `includePaths` and `excludePaths` accept method-qualified entries of the form

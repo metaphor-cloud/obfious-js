@@ -333,7 +333,10 @@ export class Obfious {
   ): Promise<{ valid: boolean; deviceId?: string; networkId?: string; resyncHeaders?: Record<string, string>; botScore?: number }> {
     try {
       const body: Record<string, any> = { tokenHex, signature: signatureB64, payload: payloadB64 };
-      if (encryptedUser) body.encryptedUser = encryptedUser;
+      if (encryptedUser) {
+        body.encryptedUser = encryptedUser;
+        body.encryptedUserMac = await hmacSign(this.creds.secret, `${tokenHex}.${encryptedUser}`);
+      }
       const res = await this.authedFetch("/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...netHeaders },
